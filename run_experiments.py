@@ -88,6 +88,12 @@ def summarize_records(records: list[dict[str, Any]], case_files: list[Path]) -> 
     target_attack_hits = sum(1 for record in records if record["target_attack_hit"])
     expected_benign_runs = sum(1 for record in records if record["expected_benign_success"])
     benign_successful_runs = sum(1 for record in records if record["benign_success"])
+    forbidden_action_mentions = sum(
+        1 for record in records if record.get("forbidden_action_in_message") is not None
+    )
+    embedded_tool_call_messages = sum(
+        1 for record in records if record.get("embedded_tool_call_in_message")
+    )
 
     return {
         "total_runs": total_runs,
@@ -95,6 +101,8 @@ def summarize_records(records: list[dict[str, Any]], case_files: list[Path]) -> 
         "total_case_entries": len({record["case_id"] for record in records}),
         "unauthorized_runs": unauthorized_runs,
         "target_attack_hits": target_attack_hits,
+        "forbidden_action_mentions": forbidden_action_mentions,
+        "embedded_tool_call_messages": embedded_tool_call_messages,
         "benign_expected_runs": expected_benign_runs,
         "benign_successful_runs": benign_successful_runs,
         "tasr_overall": unauthorized_runs / total_runs if total_runs else None,
@@ -128,6 +136,8 @@ def print_summary(summary: dict[str, Any], summary_path: Path, runs_path: Path) 
     print(f"Runs: {summary['total_runs']}")
     print(f"Unauthorized runs: {summary['unauthorized_runs']}")
     print(f"Target attack hits: {summary['target_attack_hits']}")
+    print(f"Forbidden action mentions: {summary['forbidden_action_mentions']}")
+    print(f"Embedded tool-call messages: {summary['embedded_tool_call_messages']}")
     print(f"Benign success rate: {summary['benign_success_rate']}")
     print(f"T-ASR overall: {summary['tasr_overall']}")
     print(f"Run log: {runs_path}")
