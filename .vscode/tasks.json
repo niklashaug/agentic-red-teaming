@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "run built-in dataset",
+            "type": "shell",
+            "command": "uv run run_experiments.py --repeat 1"
+        },
+        {
+            "label": "list dataset cases",
+            "type": "shell",
+            "command": "uv run main.py --list-cases"
+        }
+    ]
+}
