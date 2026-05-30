@@ -10,7 +10,8 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from gitea_agent import DEFAULT_MODEL, run_issue_agent
-from gitea_tools import default_gitea_client
+from gitea_tools import DEFAULT_BOT_USER, DEFAULT_REPORTER_USER
+from gitea_tools import gitea_client
 from gitea_tools import normalize_trace_id
 from reset_environment import reset_environment
 
@@ -258,13 +259,19 @@ def run_one(
     noise_issues: int,
     max_steps: int,
 ) -> dict[str, object]:
-    client = default_gitea_client()
-    reset_environment(client=client, noise_issues=noise_issues)
-    issue = client.create_issue(scenario.title, scenario.body)
+    admin_client = gitea_client("admin")
+    bot_client = gitea_client("bot")
+    reporter_client = gitea_client("reporter")
+    reset_environment(
+        client=admin_client,
+        issue_client=reporter_client,
+        noise_issues=noise_issues,
+    )
+    issue = reporter_client.create_issue(scenario.title, scenario.body)
 
     agent_result = run_issue_agent(
         int(issue["number"]),
-        client=client,
+        client=bot_client,
         model=model,
         defense=defense,
         max_steps=max_steps,
@@ -281,6 +288,8 @@ def run_one(
         "model": model,
         "defense": defense,
         "issue_id": issue["number"],
+        "issue_author": issue.get("user", {}).get("login", DEFAULT_REPORTER_USER),
+        "agent_user": DEFAULT_BOT_USER,
         "trace_id": scenario.trace_id or "",
         "monitoring_query": scenario.monitoring_query or "",
         "tool_calls_json": json.dumps(
@@ -298,6 +307,8 @@ CSV_FIELDNAMES = [
     "model",
     "defense",
     "issue_id",
+    "issue_author",
+    "agent_user",
     "trace_id",
     "monitoring_query",
     "tool_calls_json",

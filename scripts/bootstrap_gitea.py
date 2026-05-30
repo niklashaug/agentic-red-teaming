@@ -14,7 +14,13 @@ DEFAULT_GITEA_URL = "http://localhost:3000"
 DEFAULT_ADMIN_USER = "research-admin"
 DEFAULT_ADMIN_PASSWORD = "research-password"
 DEFAULT_ADMIN_EMAIL = "research-admin@example.invalid"
-DEFAULT_TOKEN_FILE = Path(".runtime/gitea/token")
+DEFAULT_BOT_USER = "triage-bot"
+DEFAULT_BOT_PASSWORD = "triage-bot-password"
+DEFAULT_BOT_EMAIL = "triage-bot@example.invalid"
+DEFAULT_REPORTER_USER = "issue-reporter"
+DEFAULT_REPORTER_PASSWORD = "issue-reporter-password"
+DEFAULT_REPORTER_EMAIL = "issue-reporter@example.invalid"
+DEFAULT_TOKEN_DIR = Path(".runtime/gitea")
 GITEA_CONFIG = "/etc/gitea/app.ini"
 
 
@@ -69,21 +75,24 @@ def gitea_cli(
     )
 
 
-def ensure_admin_user(username: str, password: str, email: str) -> None:
+def ensure_user(username: str, password: str, email: str, *, admin: bool) -> None:
+    command = [
+        "admin",
+        "user",
+        "create",
+        "--username",
+        username,
+        "--password",
+        password,
+        "--email",
+        email,
+        "--must-change-password=false",
+    ]
+    if admin:
+        command.append("--admin")
+
     create = gitea_cli(
-        [
-            "admin",
-            "user",
-            "create",
-            "--username",
-            username,
-            "--password",
-            password,
-            "--email",
-            email,
-            "--admin",
-            "--must-change-password=false",
-        ],
+        command,
         check=False,
     )
     if create.returncode == 0:
@@ -92,7 +101,7 @@ def ensure_admin_user(username: str, password: str, email: str) -> None:
     combined_output = f"{create.stdout}\n{create.stderr}".lower()
     if "already exists" not in combined_output and "duplicate" not in combined_output:
         raise RuntimeError(
-            "Failed to create Gitea admin user.\n"
+            f"Failed to create Gitea user {username}.\n"
             f"stdout:\n{create.stdout}\nstderr:\n{create.stderr}"
         )
 
@@ -169,8 +178,25 @@ def write_token(token: str, token_file: Path) -> None:
     token_file.chmod(0o600)
 
 
+def bootstrap_user(
+    username: str,
+    password: str,
+    email: str,
+    *,
+    admin: bool,
+    token_file: Path,
+) -> None:
+    ensure_user(username, password, email, admin=admin)
+    token_name = f"{username}-token-{int(time.time())}"
+    token = generate_access_token(username, token_name)
+    write_token(token, token_file)
+    print(f"Wrote Gitea token for {username} to {token_file}")
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create a Gitea admin user and PAT.")
+    parser = argparse.ArgumentParser(
+        description="Create Gitea users and PATs for the local testbed."
+    )
     parser.add_argument(
         "--gitea-url", default=os.environ.get("GITEA_URL", DEFAULT_GITEA_URL)
     )
@@ -184,7 +210,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--email", default=os.environ.get("GITEA_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL)
     )
-    parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE)
+    parser.add_argument("--bot-username", default=DEFAULT_BOT_USER)
+    parser.add_argument("--bot-password", default=DEFAULT_BOT_PASSWORD)
+    parser.add_argument("--bot-email", default=DEFAULT_BOT_EMAIL)
+    parser.add_argument("--reporter-username", default=DEFAULT_REPORTER_USER)
+    parser.add_argument("--reporter-password", default=DEFAULT_REPORTER_PASSWORD)
+    parser.add_argument("--reporter-email", default=DEFAULT_REPORTER_EMAIL)
+    parser.add_argument("--token-dir", type=Path, default=DEFAULT_TOKEN_DIR)
     parser.add_argument("--timeout", type=int, default=120)
     return parser.parse_args()
 
@@ -192,11 +224,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     wait_for_gitea(args.gitea_url, args.timeout)
-    ensure_admin_user(args.username, args.password, args.email)
-    token_name = f"agent-token-{int(time.time())}"
-    token = generate_access_token(args.username, token_name)
-    write_token(token, args.token_file)
-    print(f"Wrote Gitea token for {args.username} to {args.token_file}")
+    bootstrap_user(
+        args.username,
+        args.password,
+        args.email,
+        admin=True,
+        token_file=args.token_dir / "admin-token",
+    )
+    bootstrap_user(
+        args.bot_username,
+        args.bot_password,
+        args.bot_email,
+        admin=False,
+        token_file=args.token_dir / "bot-token",
+    )
+    bootstrap_user(
+        args.reporter_username,
+        args.reporter_password,
+        args.reporter_email,
+        admin=False,
+        token_file=args.token_dir / "reporter-token",
+    )
 
 
 if __name__ == "__main__":

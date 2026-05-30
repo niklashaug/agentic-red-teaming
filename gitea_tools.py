@@ -15,8 +15,13 @@ from urllib.request import Request, urlopen
 DEFAULT_GITEA_URL = "http://localhost:3000"
 DEFAULT_LOGSERVER_URL = "http://localhost:8000"
 DEFAULT_OWNER = "research-admin"
+DEFAULT_BOT_USER = "triage-bot"
+DEFAULT_REPORTER_USER = "issue-reporter"
 DEFAULT_REPO = "issue-triage-lab"
 DEFAULT_TOKEN_FILE = Path(".runtime/gitea/token")
+DEFAULT_ADMIN_TOKEN_FILE = Path(".runtime/gitea/admin-token")
+DEFAULT_BOT_TOKEN_FILE = Path(".runtime/gitea/bot-token")
+DEFAULT_REPORTER_TOKEN_FILE = Path(".runtime/gitea/reporter-token")
 DEFAULT_TIMEOUT_SECONDS = 15
 UUID_PATTERN = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -39,16 +44,37 @@ class GiteaSettings:
     repo: str
 
 
-def load_gitea_token(token_file: Path = DEFAULT_TOKEN_FILE) -> str:
+TOKEN_FILES = {
+    "admin": DEFAULT_ADMIN_TOKEN_FILE,
+    "bot": DEFAULT_BOT_TOKEN_FILE,
+    "reporter": DEFAULT_REPORTER_TOKEN_FILE,
+}
+
+
+def load_gitea_token(
+    token_file: Path | None = None, *, role: str = "bot"
+) -> str:
+    env_key = f"GITEA_{role.upper()}_TOKEN"
+    token = os.environ.get(env_key, "").strip()
+    if token:
+        return token
+
     token = os.environ.get("GITEA_TOKEN", "").strip()
     if token:
         return token
 
+    if token_file is None:
+        token_file = TOKEN_FILES.get(role, DEFAULT_TOKEN_FILE)
+
     if token_file.exists():
         return token_file.read_text(encoding="utf-8").strip()
 
+    if DEFAULT_TOKEN_FILE.exists():
+        return DEFAULT_TOKEN_FILE.read_text(encoding="utf-8").strip()
+
     raise RuntimeError(
-        "No Gitea token configured. Set GITEA_TOKEN or run scripts/bootstrap_gitea.py."
+        f"No Gitea token configured for role '{role}'. "
+        "Set GITEA_TOKEN or run scripts/bootstrap_gitea.py."
     )
 
 
@@ -58,12 +84,13 @@ def load_gitea_settings(
     token: str | None = None,
     owner: str | None = None,
     repo: str | None = None,
+    role: str = "bot",
 ) -> GiteaSettings:
     return GiteaSettings(
         base_url=(base_url or os.environ.get("GITEA_URL") or DEFAULT_GITEA_URL).rstrip(
             "/"
         ),
-        token=token or load_gitea_token(),
+        token=token or load_gitea_token(role=role),
         owner=owner or os.environ.get("GITEA_REPO_OWNER", DEFAULT_OWNER),
         repo=repo or os.environ.get("GITEA_REPO_NAME", DEFAULT_REPO),
     )
@@ -168,6 +195,17 @@ class GiteaClient:
                 "readme": "Default",
             },
             expected_statuses=(201,),
+        )
+
+    def add_collaborator(self, username: str, permission: str = "write") -> Any:
+        return self.request(
+            "PUT",
+            (
+                f"repos/{quote(self.settings.owner)}/{quote(self.settings.repo)}"
+                f"/collaborators/{quote(username)}"
+            ),
+            payload={"permission": permission},
+            expected_statuses=(204,),
         )
 
     def get_file_metadata(self, filepath: str) -> dict[str, Any] | None:
@@ -330,10 +368,16 @@ class GiteaClient:
         return response if isinstance(response, list) else []
 
 
+def gitea_client(
+    role: str = "bot", *, owner: str | None = None, repo: str | None = None
+) -> GiteaClient:
+    return GiteaClient(load_gitea_settings(owner=owner, repo=repo, role=role))
+
+
 def default_gitea_client(
     *, owner: str | None = None, repo: str | None = None
 ) -> GiteaClient:
-    return GiteaClient(load_gitea_settings(owner=owner, repo=repo))
+    return gitea_client("bot", owner=owner, repo=repo)
 
 
 def normalize_trace_id(trace_id: Any) -> str:
@@ -390,7 +434,7 @@ def query_monitoring(query: str) -> dict[str, Any]:
 def read_repo_file(
     filepath: str, *, owner: str | None = None, repo: str | None = None
 ) -> str:
-    return default_gitea_client(owner=owner, repo=repo).read_file(filepath)
+    return gitea_client("bot", owner=owner, repo=repo).read_file(filepath)
 
 
 def search_repo_files(
@@ -402,7 +446,7 @@ def search_repo_files(
 def post_issue_comment(
     issue_id: int, text: str, *, owner: str | None = None, repo: str | None = None
 ) -> dict[str, Any]:
-    return default_gitea_client(owner=owner, repo=repo).post_issue_comment(
+    return gitea_client("bot", owner=owner, repo=repo).post_issue_comment(
         issue_id, text
     )
 
@@ -414,7 +458,7 @@ def set_issue_labels(
     owner: str | None = None,
     repo: str | None = None,
 ) -> list[dict[str, Any]]:
-    return default_gitea_client(owner=owner, repo=repo).manage_issue_labels(
+    return gitea_client("bot", owner=owner, repo=repo).manage_issue_labels(
         issue_id, labels
     )
 

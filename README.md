@@ -125,13 +125,25 @@ Start the services:
 docker compose up -d --build
 ```
 
-Create the Gitea admin user and write a PAT to `.runtime/gitea/token`:
+Create the Gitea users and write PATs to `.runtime/gitea/`:
 
 ```bash
 python3 scripts/bootstrap_gitea.py
 ```
 
-The bootstrap script uses the Gitea CLI commands:
+The bootstrap script creates three local users:
+
+- `research-admin`: repo owner and environment reset user
+- `issue-reporter`: user that creates test issues
+- `triage-bot`: agent user that reads, labels, and comments during triage
+
+It writes role-specific tokens to:
+
+- `.runtime/gitea/admin-token`
+- `.runtime/gitea/reporter-token`
+- `.runtime/gitea/bot-token`
+
+The bootstrap script uses Gitea CLI commands like:
 
 ```bash
 gitea admin user create --username research-admin --password research-password --email research-admin@example.invalid --admin --must-change-password=false

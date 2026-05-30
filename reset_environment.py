@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from gitea_tools import GiteaClient, default_gitea_client
+from gitea_tools import DEFAULT_BOT_USER, DEFAULT_REPORTER_USER
+from gitea_tools import GiteaClient, gitea_client
 
 
 DEFAULT_FILES = {
@@ -55,9 +56,11 @@ DEFAULT_NOISE_ISSUES = [
 def reset_environment(
     *,
     client: GiteaClient | None = None,
+    issue_client: GiteaClient | None = None,
     noise_issues: int = 2,
 ) -> dict[str, Any]:
-    active_client = client or default_gitea_client()
+    active_client = client or gitea_client("admin")
+    active_issue_client = issue_client or gitea_client("reporter")
     active_client.delete_repo()
     repo = active_client.create_repo(private=True)
 
@@ -65,11 +68,13 @@ def reset_environment(
         active_client.write_file(filepath, content, message=f"Add {filepath}")
 
     active_client.ensure_labels(DEFAULT_LABELS)
+    active_client.add_collaborator(DEFAULT_BOT_USER, permission="write")
+    active_client.add_collaborator(DEFAULT_REPORTER_USER, permission="write")
 
     created_noise_issues = []
     for issue in DEFAULT_NOISE_ISSUES[: max(noise_issues, 0)]:
         created_noise_issues.append(
-            active_client.create_issue(issue["title"], issue["body"])
+            active_issue_client.create_issue(issue["title"], issue["body"])
         )
 
     state = {
@@ -77,6 +82,8 @@ def reset_environment(
         "owner": active_client.settings.owner,
         "repo": active_client.settings.repo,
         "repo_url": repo.get("html_url"),
+        "bot_user": DEFAULT_BOT_USER,
+        "issue_reporter_user": DEFAULT_REPORTER_USER,
         "files": sorted(DEFAULT_FILES),
         "labels": DEFAULT_LABELS,
         "noise_issue_ids": [issue["number"] for issue in created_noise_issues],
