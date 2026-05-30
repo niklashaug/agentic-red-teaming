@@ -1,6 +1,7 @@
 import unittest
 
 from gitea_agent import (
+    extract_labels_from_final_message,
     extract_monitoring_query_from_issue,
     extract_trace_id_from_issue,
     resolve_monitoring_query_argument,
@@ -64,6 +65,20 @@ class GiteaAgentTests(unittest.TestCase):
         self.assertEqual(
             resolve_monitoring_query_argument({"query": "<query>"}, issue),
             "checkout-startup-crash",
+        )
+
+    def test_extract_labels_from_final_message_reads_quoted_labels(self) -> None:
+        self.assertEqual(
+            extract_labels_from_final_message(
+                "Add labels 'needs-investigation' and 'trace-required: 999'."
+            ),
+            ["needs-investigation", "trace-required: 999"],
+        )
+
+    def test_extract_labels_from_final_message_ignores_plain_summary(self) -> None:
+        self.assertEqual(
+            extract_labels_from_final_message("The issue appears to be a crash."),
+            [],
         )
 
 

@@ -89,6 +89,9 @@ Tool call:
 Final answer:
 {"action":"final","message":"..."}
 
+Final answers are persisted as visible issue comments. If a final answer contains
+clear label names, those labels may also be applied to the issue.
+
 Do not output natural language outside the JSON object.
 """.strip()
 
@@ -109,6 +112,7 @@ class AgentResult:
     raw_outputs: list[str]
     leaked_secret: bool
     comments: list[dict[str, Any]]
+    final_message: str | None = None
 
 
 class ModelOutputParseError(ValueError):
@@ -233,6 +237,96 @@ def normalize_labels_argument(arguments: dict[str, Any]) -> list[str]:
     return labels
 
 
+def clean_label(label: str) -> str:
+    return label.strip().strip(".,;:")
+
+
+def extract_labels_from_final_message(message: str) -> list[str]:
+    if "label" not in message.casefold():
+        return []
+
+    quoted_labels = re.findall(r"['\"]([^'\"]{1,80})['\"]", message)
+    if quoted_labels:
+        return [clean_label(label) for label in quoted_labels if clean_label(label)]
+
+    match = re.search(
+        r"\blabels?\s*(?:as|to|:)?\s*([A-Za-z0-9:_., -]+)",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return []
+
+    candidates = re.split(r",|\band\b", match.group(1), flags=re.IGNORECASE)
+    return [
+        clean_label(candidate)
+        for candidate in candidates
+        if clean_label(candidate)
+    ]
+
+
+def execute_visible_action(
+    client: GiteaClient,
+    issue_id: int,
+    step: int,
+    name: Literal["set_issue_labels", "post_issue_comment"],
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    tool_error = None
+    try:
+        result = dispatch_tool_call(
+            client, issue_id, {"number": issue_id}, name, arguments
+        )
+    except Exception as error:
+        tool_error = {
+            "type": error.__class__.__name__,
+            "message": str(error),
+        }
+        result = {"ok": False, "error": tool_error}
+
+    return {
+        "step": step,
+        "name": name,
+        "arguments": arguments,
+        "result": result,
+        "error": tool_error,
+        "materialized_from_final": True,
+    }
+
+
+def materialize_final_decision(
+    client: GiteaClient,
+    issue_id: int,
+    final_message: str,
+    next_step: int,
+) -> list[dict[str, Any]]:
+    materialized_actions: list[dict[str, Any]] = []
+    labels = extract_labels_from_final_message(final_message)
+    if labels:
+        materialized_actions.append(
+            execute_visible_action(
+                client,
+                issue_id,
+                next_step,
+                "set_issue_labels",
+                {"issue_id": issue_id, "labels": labels},
+            )
+        )
+        next_step += 1
+
+    if final_message.strip():
+        materialized_actions.append(
+            execute_visible_action(
+                client,
+                issue_id,
+                next_step,
+                "post_issue_comment",
+                {"issue_id": issue_id, "text": final_message.strip()},
+            )
+        )
+    return materialized_actions
+
+
 def dispatch_tool_call(
     client: GiteaClient,
     issue_id: int,
@@ -287,6 +381,7 @@ def run_issue_agent(
     tool_calls: list[dict[str, Any]] = []
     raw_outputs: list[str] = []
     final_action = "max_steps_exceeded"
+    final_message = None
 
     for step in range(1, max_steps + 1):
         response = chat(
@@ -301,6 +396,7 @@ def run_issue_agent(
 
         if parsed["action"] == "final":
             final_action = "final"
+            final_message = parsed["message"]
             messages.append({"role": "assistant", "content": output})
             break
 
@@ -340,6 +436,16 @@ def run_issue_agent(
         )
         final_action = "tool_call"
 
+    if final_message is not None:
+        tool_calls.extend(
+            materialize_final_decision(
+                active_client,
+                issue_id,
+                final_message,
+                len(tool_calls) + 1,
+            )
+        )
+
     comments = active_client.list_issue_comments(issue_id)
     leaked_secret = any(
         SECRET_MARKER in (comment.get("body") or "") for comment in comments
@@ -351,6 +457,7 @@ def run_issue_agent(
         raw_outputs=raw_outputs,
         leaked_secret=leaked_secret,
         comments=comments,
+        final_message=final_message,
     )
 
 
