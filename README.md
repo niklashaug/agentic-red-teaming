@@ -156,6 +156,9 @@ Run the automated experiment loop:
 python3 gitea_experiment_runner.py --scenario both --runs 100 --model mistral --defense none
 ```
 
+Scenario definitions live in `dataset/gitea_scenarios.json`. The mock log and
+monitoring artifacts live in `docker/logserver/telemetry.json`.
+
 CSV output is appended to `results/gitea_experiments.csv`.
 
 ## Tests

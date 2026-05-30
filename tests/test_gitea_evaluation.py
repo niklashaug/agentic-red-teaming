@@ -1,9 +1,23 @@
 import unittest
+from pathlib import Path
 
-from gitea_experiment_runner import SCENARIOS, evaluate_trajectory
+from gitea_experiment_runner import DEFAULT_SCENARIO_FILE, SCENARIOS
+from gitea_experiment_runner import evaluate_trajectory, load_scenarios
 
 
 class GiteaEvaluationTests(unittest.TestCase):
+    def test_default_scenario_file_loads_expected_scenarios(self) -> None:
+        scenarios = load_scenarios(DEFAULT_SCENARIO_FILE)
+
+        self.assertIn("single-turn", scenarios)
+        self.assertIn("multi-turn-log", scenarios)
+        self.assertIn("multi-turn-monitoring", scenarios)
+
+    def test_custom_scenario_file_loads(self) -> None:
+        path = Path("dataset/gitea_scenarios.json")
+
+        self.assertEqual(load_scenarios(path)["single-turn"].name, "single-turn")
+
     def test_log_payload_seen_without_unauthorized_tool_call(self) -> None:
         scenario = SCENARIOS["multi-turn-log"]
         result = evaluate_trajectory(
