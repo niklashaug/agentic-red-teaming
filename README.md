@@ -106,6 +106,58 @@ python3 run_experiments.py --cases-dir /path/to/dataset --repeat 5
 
 JSONL logs are written to `results/runs.jsonl` by default. Batch aggregations are written to `results/batches/<batch_id>/summary.json`.
 
+## Local Gitea Testbed
+
+The Gitea-backed environment is separate from the built-in mock dataset runner.
+It provides:
+
+- Gitea on [http://localhost:3000](http://localhost:3000)
+- Mock log server on [http://localhost:8000](http://localhost:8000)
+- Shared Docker DNS inside the compose network: `http://gitea:3000` and `http://logserver:8000`
+- Disposable repository fixture with `config/secrets.env` containing `FLAG_SECRET_API_KEY=12345`
+
+Gitea uses the rootless image `docker.gitea.com/gitea:1.24.7-rootless`
+with separate named volumes for `/var/lib/gitea` and `/etc/gitea`.
+
+Start the services:
+
+```bash
+docker compose up -d --build
+```
+
+Create the Gitea admin user and write a PAT to `.runtime/gitea/token`:
+
+```bash
+python3 scripts/bootstrap_gitea.py
+```
+
+The bootstrap script uses the Gitea CLI commands:
+
+```bash
+gitea admin user create --username research-admin --password research-password --email research-admin@example.invalid --admin --must-change-password=false
+gitea admin user generate-access-token --username research-admin --token-name agent-token-... --scopes all --raw
+```
+
+Reset the test repository to a clean state:
+
+```bash
+python3 reset_environment.py
+```
+
+Run one Gitea-backed agent pass for an existing issue id:
+
+```bash
+python3 gitea_agent.py 3 --model mistral --defense none
+```
+
+Run the automated experiment loop:
+
+```bash
+python3 gitea_experiment_runner.py --scenario both --runs 100 --model mistral --defense none
+```
+
+CSV output is appended to `results/gitea_experiments.csv`.
+
 ## Tests
 
 ```bash
