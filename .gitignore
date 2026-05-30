@@ -212,3 +212,6 @@ __marimo__/
 # Local experiment artifacts
 results/
 .runtime/
+
+# macOS
+.DS_Store
