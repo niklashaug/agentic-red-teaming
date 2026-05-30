@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urlencode, urljoin
 from urllib.request import Request, urlopen
 
 
@@ -18,6 +18,10 @@ DEFAULT_OWNER = "research-admin"
 DEFAULT_REPO = "issue-triage-lab"
 DEFAULT_TOKEN_FILE = Path(".runtime/gitea/token")
 DEFAULT_TIMEOUT_SECONDS = 15
+UUID_PATTERN = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
 
 
 class GiteaApiError(RuntimeError):
@@ -275,6 +279,30 @@ class GiteaClient:
         )
         return comments if isinstance(comments, list) else []
 
+    def list_issues(self) -> list[dict[str, Any]]:
+        issues = self.request(
+            "GET",
+            f"repos/{quote(self.settings.owner)}/{quote(self.settings.repo)}/issues",
+            expected_statuses=(200,),
+        )
+        return issues if isinstance(issues, list) else []
+
+    def search_similar_issues(self, query: str) -> list[dict[str, Any]]:
+        terms = [term.casefold() for term in re.findall(r"\w+", query) if len(term) > 2]
+        matches = []
+        for issue in self.list_issues():
+            haystack = f"{issue.get('title', '')} {issue.get('body', '')}".casefold()
+            if not terms or any(term in haystack for term in terms):
+                matches.append(
+                    {
+                        "number": issue.get("number"),
+                        "title": issue.get("title"),
+                        "state": issue.get("state"),
+                        "body": issue.get("body", "")[:240],
+                    }
+                )
+        return matches[:5]
+
     def post_issue_comment(self, issue_id: int, text: str) -> dict[str, Any]:
         return self.request(
             "POST",
@@ -308,32 +336,40 @@ def default_gitea_client(
     return GiteaClient(load_gitea_settings(owner=owner, repo=repo))
 
 
-def normalize_log_trace_id(trace_id: Any) -> str:
+def normalize_trace_id(trace_id: Any) -> str:
     if isinstance(trace_id, dict):
         for key in ("trace_id", "trace", "id"):
             if key in trace_id:
-                return normalize_log_trace_id(trace_id[key])
+                return normalize_trace_id(trace_id[key])
 
     raw_trace_id = str(trace_id).strip()
-    if raw_trace_id.isdigit():
-        return raw_trace_id
+    uuid_match = UUID_PATTERN.search(raw_trace_id)
+    if uuid_match:
+        return uuid_match.group(0).lower()
 
     match = re.search(
-        r"\b(?:trace[_ -]?id|trace|id)\s*[=:]?\s*(\d+)\b", raw_trace_id
+        r"\b(?:trace[_ -]?id|trace|id)\s*[=:]?\s*([A-Za-z0-9-]+)\b",
+        raw_trace_id,
     )
     if match:
-        return match.group(1)
+        value = match.group(1)
+        if value.isdigit():
+            return value
 
     fallback_match = re.search(r"\b(\d+)\b", raw_trace_id)
     if fallback_match:
         return fallback_match.group(1)
 
-    raise ValueError(f"Could not extract a numeric trace_id from: {trace_id!r}")
+    raise ValueError(f"Could not extract a trace_id from: {trace_id!r}")
+
+
+def normalize_log_trace_id(trace_id: Any) -> str:
+    return normalize_trace_id(trace_id)
 
 
 def query_logs(trace_id: Any) -> dict[str, Any]:
     base_url = os.environ.get("LOGSERVER_URL", DEFAULT_LOGSERVER_URL).rstrip("/")
-    normalized_trace_id = normalize_log_trace_id(trace_id)
+    normalized_trace_id = normalize_trace_id(trace_id)
     return _request_json(
         "GET",
         f"{base_url}/api/logs/{quote(normalized_trace_id)}",
@@ -341,10 +377,26 @@ def query_logs(trace_id: Any) -> dict[str, Any]:
     )
 
 
-def search_repo_files(
+def query_monitoring(query: str) -> dict[str, Any]:
+    base_url = os.environ.get("LOGSERVER_URL", DEFAULT_LOGSERVER_URL).rstrip("/")
+    encoded_query = urlencode({"query": query})
+    return _request_json(
+        "GET",
+        f"{base_url}/api/monitoring?{encoded_query}",
+        expected_statuses=(200,),
+    )
+
+
+def read_repo_file(
     filepath: str, *, owner: str | None = None, repo: str | None = None
 ) -> str:
     return default_gitea_client(owner=owner, repo=repo).read_file(filepath)
+
+
+def search_repo_files(
+    filepath: str, *, owner: str | None = None, repo: str | None = None
+) -> str:
+    return read_repo_file(filepath, owner=owner, repo=repo)
 
 
 def post_issue_comment(
@@ -355,7 +407,7 @@ def post_issue_comment(
     )
 
 
-def manage_issue_labels(
+def set_issue_labels(
     issue_id: int,
     labels: list[str],
     *,
@@ -365,3 +417,13 @@ def manage_issue_labels(
     return default_gitea_client(owner=owner, repo=repo).manage_issue_labels(
         issue_id, labels
     )
+
+
+def manage_issue_labels(
+    issue_id: int,
+    labels: list[str],
+    *,
+    owner: str | None = None,
+    repo: str | None = None,
+) -> list[dict[str, Any]]:
+    return set_issue_labels(issue_id, labels, owner=owner, repo=repo)

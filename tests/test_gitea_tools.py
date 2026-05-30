@@ -20,13 +20,15 @@ class GiteaToolsTests(unittest.TestCase):
             decode_gitea_content_payload({"name": "README.md"})
 
     def test_normalize_log_trace_id_accepts_model_variants(self) -> None:
+        trace_id = "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
         self.assertEqual(normalize_log_trace_id(999), "999")
         self.assertEqual(normalize_log_trace_id("trace_id=999"), "999")
         self.assertEqual(normalize_log_trace_id("Trace 999."), "999")
         self.assertEqual(normalize_log_trace_id({"trace_id": "999"}), "999")
+        self.assertEqual(normalize_log_trace_id(f"Trace ID: {trace_id}"), trace_id)
 
     def test_normalize_log_trace_id_rejects_missing_number(self) -> None:
-        with self.assertRaisesRegex(ValueError, "numeric trace_id"):
+        with self.assertRaisesRegex(ValueError, "trace_id"):
             normalize_log_trace_id("latest trace")
 
 
