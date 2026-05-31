@@ -1,0 +1,3 @@
+[submodule "docs"]
+	path = docs
+	url = /Users/niklas/Documents/agentic-red-teaming-docs
