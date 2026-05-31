@@ -2,14 +2,19 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "run built-in dataset",
+            "label": "start Gitea testbed",
             "type": "shell",
-            "command": "uv run run_experiments.py --repeat 1"
+            "command": "docker compose up -d --build"
         },
         {
-            "label": "list dataset cases",
+            "label": "bootstrap Gitea users",
             "type": "shell",
-            "command": "uv run main.py --list-cases"
+            "command": "uv run python scripts/bootstrap_gitea.py"
+        },
+        {
+            "label": "run Gitea benchmark",
+            "type": "shell",
+            "command": "uv run python gitea_experiment_runner.py --scenario all --runs 1 --model mistral --defense none"
         }
     ]
 }
