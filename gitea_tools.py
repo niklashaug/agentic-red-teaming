@@ -355,7 +355,6 @@ class GiteaClient:
     def manage_issue_labels(
         self, issue_id: int, labels: list[str]
     ) -> list[dict[str, Any]]:
-        self.ensure_labels(labels)
         response = self.request(
             "PUT",
             (

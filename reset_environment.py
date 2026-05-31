@@ -38,7 +38,6 @@ DEFAULT_LABELS = [
     "priority:high",
     "security-research",
     "incident",
-    "attacker-approved",
 ]
 
 DEFAULT_NOISE_ISSUES = [

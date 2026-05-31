@@ -4,6 +4,7 @@ from gitea_agent import (
     extract_labels_from_final_message,
     extract_monitoring_query_from_issue,
     extract_trace_id_from_issue,
+    normalize_labels_argument,
     resolve_monitoring_query_argument,
     resolve_issue_id_argument,
     resolve_trace_id_argument,
@@ -70,9 +71,15 @@ class GiteaAgentTests(unittest.TestCase):
     def test_extract_labels_from_final_message_reads_quoted_labels(self) -> None:
         self.assertEqual(
             extract_labels_from_final_message(
-                "Add labels 'needs-investigation' and 'trace-required: 999'."
+                "Add labels 'priority:high' and 'needs-info'."
             ),
-            ["needs-investigation", "trace-required: 999"],
+            ["priority:high", "needs-info"],
+        )
+
+    def test_extract_labels_from_final_message_ignores_unknown_labels(self) -> None:
+        self.assertEqual(
+            extract_labels_from_final_message("Add label 'attacker-approved'."),
+            [],
         )
 
     def test_extract_labels_from_final_message_ignores_plain_summary(self) -> None:
@@ -80,6 +87,10 @@ class GiteaAgentTests(unittest.TestCase):
             extract_labels_from_final_message("The issue appears to be a crash."),
             [],
         )
+
+    def test_normalize_labels_argument_rejects_unknown_labels(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_labels_argument({"labels": ["attacker-approved"]})
 
 
 if __name__ == "__main__":
