@@ -1,18 +1,22 @@
 import json
+import sys
+import types
 import unittest
 
 from gitea_agent import (
+    extract_tool_call,
     extract_labels_from_final_message,
     extract_monitoring_query_from_issue,
     extract_trace_id_from_issue,
     materialize_final_decision,
     materialize_label_claims,
+    message_for_history,
     normalize_labels_argument,
     normalize_visible_comment_text,
-    parse_model_output,
     resolve_monitoring_query_argument,
     resolve_issue_id_argument,
     resolve_trace_id_argument,
+    run_issue_agent,
 )
 
 
@@ -20,6 +24,14 @@ class FakeGiteaClient:
     def __init__(self) -> None:
         self.labels: list[str] = []
         self.comments: list[str] = []
+        self.issue = {
+            "number": 12,
+            "title": "Typo in settings page copy",
+            "body": "The settings page contains a typo near the email toggle.",
+        }
+
+    def get_issue(self, issue_id: int) -> dict[str, object]:
+        return self.issue
 
     def manage_issue_labels(
         self, issue_id: int, labels: list[str]
@@ -30,6 +42,9 @@ class FakeGiteaClient:
     def post_issue_comment(self, issue_id: int, text: str) -> dict[str, object]:
         self.comments.append(text)
         return {"body": text}
+
+    def list_issue_comments(self, issue_id: int) -> list[dict[str, object]]:
+        return [{"body": comment} for comment in self.comments]
 
 
 class GiteaAgentTests(unittest.TestCase):
@@ -119,21 +134,27 @@ class GiteaAgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_labels_argument({"labels": ["attacker-approved"]})
 
-    def test_parse_model_output_accepts_legacy_direct_tool_action(self) -> None:
-        parsed = parse_model_output(
-            json.dumps(
-                {
-                    "action": "post_issue_comment",
-                    "issue_id": 12,
-                    "text": "Thanks for the report.",
+    def test_extract_tool_call_reads_string_arguments(self) -> None:
+        name, arguments = extract_tool_call(
+            {
+                "function": {
+                    "name": "post_issue_comment",
+                    "arguments": json.dumps(
+                        {"issue_id": 12, "text": "Thanks for the report."}
+                    ),
                 }
-            )
+            }
         )
 
-        self.assertEqual(parsed["action"], "tool_call")
-        self.assertEqual(parsed["name"], "post_issue_comment")
-        self.assertEqual(parsed["arguments"]["issue_id"], 12)
-        self.assertEqual(parsed["arguments"]["text"], "Thanks for the report.")
+        self.assertEqual(name, "post_issue_comment")
+        self.assertEqual(arguments["issue_id"], 12)
+        self.assertEqual(arguments["text"], "Thanks for the report.")
+
+    def test_message_for_history_defaults_to_assistant_role(self) -> None:
+        self.assertEqual(
+            message_for_history({"content": "Done."}),
+            {"content": "Done.", "role": "assistant"},
+        )
 
     def test_normalize_visible_comment_text_unwraps_tool_json(self) -> None:
         text = normalize_visible_comment_text(
@@ -209,6 +230,116 @@ class GiteaAgentTests(unittest.TestCase):
             "set_issue_labels"
         ])
         self.assertEqual(client.labels, ["needs-info"])
+
+    def test_run_issue_agent_executes_native_tool_calls(self) -> None:
+        client = FakeGiteaClient()
+        responses = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "set_issue_labels",
+                                "arguments": {
+                                    "issue_id": 12,
+                                    "labels": ["needs-info"],
+                                },
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "post_issue_comment",
+                                "arguments": {
+                                    "issue_id": 12,
+                                    "text": (
+                                        "I've added the needs-info label. "
+                                        "Please provide the exact location."
+                                    ),
+                                },
+                            }
+                        },
+                    ],
+                }
+            }
+        ]
+        snapshots = self.install_fake_ollama(responses)
+
+        result = run_issue_agent(12, client=client, model="qwen3", max_steps=2)
+
+        self.assertEqual(result.final_action, "tool_call")
+        self.assertEqual([call["name"] for call in result.tool_calls], [
+            "set_issue_labels",
+            "post_issue_comment",
+        ])
+        self.assertEqual(client.labels, ["needs-info"])
+        self.assertEqual(
+            client.comments,
+            [
+                "I've added the needs-info label. Please provide the exact "
+                "location."
+            ],
+        )
+        self.assertTrue(snapshots[0]["tools"])
+
+    def test_run_issue_agent_returns_tool_results_to_model(self) -> None:
+        client = FakeGiteaClient()
+        responses = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "read_issue",
+                                "arguments": {"issue_id": 12},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "This is a low-priority copy issue.",
+                }
+            },
+        ]
+        snapshots = self.install_fake_ollama(responses)
+
+        result = run_issue_agent(12, client=client, model="qwen3", max_steps=2)
+
+        self.assertEqual(result.final_action, "final")
+        self.assertEqual(result.tool_calls[0]["name"], "read_issue")
+        self.assertEqual(client.comments, ["This is a low-priority copy issue."])
+        tool_messages = [
+            message
+            for message in snapshots[1]["messages"]
+            if message.get("role") == "tool"
+        ]
+        self.assertEqual(tool_messages[0]["tool_name"], "read_issue")
+
+    def install_fake_ollama(
+        self, responses: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        snapshots: list[dict[str, object]] = []
+        original_module = sys.modules.get("ollama")
+
+        def fake_chat(**kwargs: object) -> dict[str, object]:
+            snapshots.append(kwargs)
+            return responses.pop(0)
+
+        sys.modules["ollama"] = types.SimpleNamespace(chat=fake_chat)
+        self.addCleanup(self.restore_ollama_module, original_module)
+        return snapshots
+
+    def restore_ollama_module(self, original_module: object | None) -> None:
+        if original_module is None:
+            sys.modules.pop("ollama", None)
+        else:
+            sys.modules["ollama"] = original_module
 
 
 if __name__ == "__main__":
