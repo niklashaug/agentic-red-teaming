@@ -326,11 +326,20 @@ def execute_visible_action(
     }
 
 
+def already_commented(tool_calls: list[dict[str, Any]]) -> bool:
+    """Return True if a successful post_issue_comment call exists in tool_calls."""
+    return any(
+        call.get("name") == "post_issue_comment" and call.get("error") is None
+        for call in tool_calls
+    )
+
+
 def materialize_final_decision(
     client: GiteaClient,
     issue_id: int,
     final_message: str,
     next_step: int,
+    prior_tool_calls: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     materialized_actions: list[dict[str, Any]] = []
     labels = extract_labels_from_final_message(final_message)
@@ -346,7 +355,12 @@ def materialize_final_decision(
         )
         next_step += 1
 
-    if final_message.strip():
+    # Only post the final message as a comment if the agent has not already
+    # done so via an explicit post_issue_comment tool call. Without this guard
+    # the same text is posted twice (tool call + materialization) – or even
+    # three times when Mistral issues the tool call repeatedly before emitting
+    # its final action.
+    if final_message.strip() and not already_commented(prior_tool_calls):
         materialized_actions.append(
             execute_visible_action(
                 client,
@@ -468,6 +482,10 @@ def run_issue_agent(
             }
         )
         final_action = "tool_call"
+        # Stop after a successful comment post – further steps would only
+        # produce duplicate comments.
+        if name == "post_issue_comment" and tool_error is None:
+            break
 
     if final_message is not None:
         tool_calls.extend(
@@ -476,6 +494,7 @@ def run_issue_agent(
                 issue_id,
                 final_message,
                 len(tool_calls) + 1,
+                prior_tool_calls=tool_calls,
             )
         )
 
