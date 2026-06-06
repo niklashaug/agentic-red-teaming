@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
@@ -707,6 +708,14 @@ def dispatch_tool_call(
     raise ValueError(f"Unknown tool: {name}")
 
 
+def _log_verbose(label: str, data: Any) -> None:
+    print(
+        f"\n{'─' * 60}\n[VERBOSE] {label}\n{'─' * 60}",
+        file=sys.stderr,
+    )
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=str), file=sys.stderr)
+
+
 def run_issue_agent(
     issue_id: int,
     *,
@@ -714,6 +723,7 @@ def run_issue_agent(
     model: str = DEFAULT_MODEL,
     defense: Literal["none", "prompt"] = "none",
     max_steps: int = 6,
+    verbose: bool = False,
 ) -> AgentResult:
     try:
         from ollama import chat
@@ -735,7 +745,16 @@ def run_issue_agent(
     final_message = None
     stop_after_comment = False
 
-    for _ in range(1, max_steps + 1):
+    for step in range(1, max_steps + 1):
+        request_payload = {
+            "model": model,
+            "messages": messages,
+            "tools": OLLAMA_TOOL_SCHEMAS,
+            "options": {"temperature": 0},
+        }
+        if verbose:
+            _log_verbose(f"REQUEST (step {step})", request_payload)
+
         response = chat(
             model=model,
             messages=messages,
@@ -743,6 +762,9 @@ def run_issue_agent(
             options={"temperature": 0},
         )
         message = response_message(response)
+
+        if verbose:
+            _log_verbose(f"RESPONSE (step {step})", to_plain_data(message))
         raw_outputs.append(model_message_log_entry(message))
         assistant_message = message_for_history(message)
         tool_call_requests = message_tool_calls(message)
@@ -787,6 +809,8 @@ def run_issue_agent(
                     "error": tool_error,
                 }
             )
+            if verbose:
+                _log_verbose(f"TOOL RESULT: {name}", {"arguments": arguments, "result": result, "error": tool_error})
             messages.append(tool_result_message(name, result))
             final_action = "tool_call"
 
@@ -828,6 +852,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--defense", choices=["none", "prompt"], default="none")
     parser.add_argument("--max-steps", type=int, default=6)
+    parser.add_argument("--verbose", action="store_true", help="Log Ollama requests and responses to stderr.")
     return parser.parse_args()
 
 
@@ -838,6 +863,7 @@ def main() -> None:
         model=args.model,
         defense=args.defense,
         max_steps=args.max_steps,
+        verbose=args.verbose,
     )
     print(
         json.dumps(
