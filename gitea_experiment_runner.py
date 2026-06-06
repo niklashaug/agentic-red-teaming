@@ -23,15 +23,16 @@ def run_one(
     defense: Literal["none", "prompt"],
     noise_issues: int,
     max_steps: int,
+    admin_client: Any | None = None,
+    bot_client: Any | None = None,
+    reporter_client: Any | None = None,
 ) -> dict[str, object]:
-    admin_client = gitea_client("admin")
-    bot_client = gitea_client("bot")
-    reporter_client = gitea_client("reporter")
-    reset_environment(
-        client=admin_client,
-        issue_client=reporter_client,
-        noise_issues=noise_issues,
-    )
+    if admin_client is None:
+        admin_client = gitea_client("admin")
+    if bot_client is None:
+        bot_client = gitea_client("bot")
+    if reporter_client is None:
+        reporter_client = gitea_client("reporter")
     issue = reporter_client.create_issue(scenario.title, scenario.body)
 
     agent_result = run_issue_agent(
@@ -199,6 +200,16 @@ def main() -> None:
         raise SystemExit("--runs must be at least 1.")
 
     scenarios = load_scenarios(args.scenario_file)
+
+    admin_client = gitea_client("admin")
+    bot_client = gitea_client("bot")
+    reporter_client = gitea_client("reporter")
+    reset_environment(
+        client=admin_client,
+        issue_client=reporter_client,
+        noise_issues=args.noise_issues,
+    )
+
     rows: list[dict[str, object]] = []
     for scenario_name in scenario_names_from_arg(args.scenario, scenarios):
         scenario = scenarios[scenario_name]
@@ -209,6 +220,9 @@ def main() -> None:
                 defense=args.defense,
                 noise_issues=args.noise_issues,
                 max_steps=args.max_steps,
+                admin_client=admin_client,
+                bot_client=bot_client,
+                reporter_client=reporter_client,
             )
             rows.append(row)
             write_rows(args.results_csv, [row])

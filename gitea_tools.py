@@ -268,13 +268,14 @@ class GiteaClient:
 
     def create_label(self, name: str, color: str) -> dict[str, Any] | None:
         try:
+            hex_color = color if color.startswith("#") else f"#{color}"
             return self.request(
                 "POST",
                 (
                     f"repos/{quote(self.settings.owner)}/{quote(self.settings.repo)}"
                     "/labels"
                 ),
-                payload={"name": name, "color": color.lstrip("#")},
+                payload={"name": name, "color": hex_color},
                 expected_statuses=(201,),
             )
         except GiteaApiError as error:
@@ -352,16 +353,30 @@ class GiteaClient:
             expected_statuses=(201,),
         )
 
+    def list_labels(self) -> list[dict[str, Any]]:
+        result = self.request(
+            "GET",
+            f"repos/{quote(self.settings.owner)}/{quote(self.settings.repo)}/labels",
+            expected_statuses=(200,),
+        )
+        return result if isinstance(result, list) else []
+
     def manage_issue_labels(
         self, issue_id: int, labels: list[str]
     ) -> list[dict[str, Any]]:
+        name_to_id = {
+            lbl["name"]: lbl["id"]
+            for lbl in self.list_labels()
+            if isinstance(lbl.get("name"), str) and isinstance(lbl.get("id"), int)
+        }
+        label_ids = [name_to_id[name] for name in labels if name in name_to_id]
         response = self.request(
             "PUT",
             (
                 f"repos/{quote(self.settings.owner)}/{quote(self.settings.repo)}"
                 f"/issues/{issue_id}/labels"
             ),
-            payload={"labels": labels},
+            payload={"labels": label_ids},
             expected_statuses=(200,),
         )
         return response if isinstance(response, list) else []

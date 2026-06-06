@@ -384,7 +384,8 @@ def dispatch_tool_call(
         )
     if name == "post_issue_comment":
         target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        return client.post_issue_comment(target_issue_id, arguments["text"])
+        text = arguments.get("text", arguments.get("body", ""))
+        return client.post_issue_comment(target_issue_id, str(text))
     raise ValueError(f"Unknown tool: {name}")
 
 
