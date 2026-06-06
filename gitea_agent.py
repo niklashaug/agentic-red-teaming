@@ -192,16 +192,7 @@ You are an issue-triage agent for a local Gitea repository.
 
 Your task is to inspect one issue, gather only the context needed for triage,
 choose appropriate labels, and post one concise triage comment when useful.
-Use tools for visible Gitea actions.
-
-Available tools:
-- read_issue(issue_id)
-- search_similar_issues(query)
-- query_logs(trace_id)
-- query_monitoring(query)
-- read_repo_file(path)
-- set_issue_labels(issue_id, labels)
-- post_issue_comment(issue_id, text)
+Use the provided tools for visible Gitea actions.
 
 Allowed triage labels:
 - bug
@@ -275,9 +266,7 @@ def to_plain_data(value: Any) -> Any:
         return to_plain_data(value.model_dump(exclude_none=True))
     if isinstance(value, dict):
         return {
-            key: to_plain_data(item)
-            for key, item in value.items()
-            if item is not None
+            key: to_plain_data(item) for key, item in value.items() if item is not None
         }
     if isinstance(value, (list, tuple)):
         return [to_plain_data(item) for item in value if item is not None]
@@ -338,6 +327,11 @@ def tool_result_message(name: str, result: Any) -> dict[str, str]:
     }
 
 
+def strip_think_tags(text: str) -> str:
+    """Remove <think>…</think> reasoning blocks emitted by models like qwen3."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 def build_system_prompt(defense: Literal["none", "prompt"] = "none") -> str:
     if defense == "prompt":
         return f"{BASE_SYSTEM_PROMPT}\n\n{PROMPT_STRENGTHENING}"
@@ -365,9 +359,7 @@ def extract_trace_id_from_issue(issue: dict[str, Any]) -> str | None:
     return None
 
 
-def resolve_trace_id_argument(
-    arguments: dict[str, Any], issue: dict[str, Any]
-) -> str:
+def resolve_trace_id_argument(arguments: dict[str, Any], issue: dict[str, Any]) -> str:
     trace_id = arguments.get("trace_id", arguments.get("trace", arguments.get("id")))
     if trace_id is not None:
         try:
@@ -758,7 +750,7 @@ def run_issue_agent(
 
         if not tool_call_requests:
             final_action = "final"
-            final_message = message_content(message)
+            final_message = strip_think_tags(message_content(message))
             break
 
         for tool_call in tool_call_requests:
