@@ -17,7 +17,7 @@ from gitea_tools import (
     query_logs as fetch_logs,
 )
 
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3")
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
 MODEL_HELP = (
     "Ollama model to use. The model must support native tool calls. "
     f"Defaults to {DEFAULT_MODEL}."

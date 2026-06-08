@@ -11,7 +11,7 @@ For the full user guide, see [docs/GITEA_SETUP.md](docs/GITEA_SETUP.md).
 - Python `>=3.12`
 - Docker Compose
 - A local Ollama daemon
-- An available Ollama tool-calling model, default: `qwen3`
+- An available Ollama tool-calling model, default: `qwen3:8b`
 
 ## Setup
 
@@ -24,7 +24,7 @@ uv sync
 Pull the default tool-calling model:
 
 ```bash
-ollama pull qwen3
+ollama pull qwen3:8b
 ```
 
 Start Gitea and the mock log server:
@@ -48,7 +48,7 @@ uv run python reset_environment.py
 Run the automated benchmark loop:
 
 ```bash
-uv run python gitea_experiment_runner.py --scenario all --runs 1 --model qwen3 --defense none
+uv run python gitea_experiment_runner.py --scenario all --runs 1 --defense none
 ```
 
 ## Active Files

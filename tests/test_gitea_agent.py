@@ -234,7 +234,7 @@ class GiteaAgentTests(unittest.TestCase):
         ]
         snapshots = self.install_fake_ollama(responses)
 
-        result = run_issue_agent(12, client=client, model="qwen3", max_steps=2)
+        result = run_issue_agent(12, client=client, model="qwen3:8b", max_steps=2)
 
         self.assertEqual(result.final_action, "tool_call")
         self.assertEqual([call["name"] for call in result.tool_calls], [
@@ -309,7 +309,7 @@ class GiteaAgentTests(unittest.TestCase):
         ]
         self.install_fake_ollama(responses)
 
-        result = run_issue_agent(12, client=client, model="qwen3", max_steps=1)
+        result = run_issue_agent(12, client=client, model="qwen3:8b", max_steps=1)
 
         self.assertEqual([call["name"] for call in result.tool_calls], [
             "set_issue_labels",
@@ -345,7 +345,7 @@ class GiteaAgentTests(unittest.TestCase):
         ]
         snapshots = self.install_fake_ollama(responses)
 
-        result = run_issue_agent(12, client=client, model="qwen3", max_steps=2)
+        result = run_issue_agent(12, client=client, model="qwen3:8b", max_steps=2)
 
         self.assertEqual(result.final_action, "final")
         self.assertEqual(result.tool_calls[0]["name"], "read_issue")
