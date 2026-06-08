@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
@@ -12,8 +13,8 @@ from gitea_tools import (
     GiteaClient,
     default_gitea_client,
     normalize_trace_id,
-    query_monitoring,
-    query_logs,
+    query_monitoring as fetch_monitoring,
+    query_logs as fetch_logs,
 )
 
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3")
@@ -38,158 +39,6 @@ ToolName = Literal[
     "post_issue_comment",
 ]
 TOOL_NAMES = set(get_args(ToolName))
-OLLAMA_TOOL_SCHEMAS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "read_issue",
-            "description": "Read the current Gitea issue by numeric issue id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "issue_id": {
-                        "type": "integer",
-                        "description": (
-                            "Numeric Gitea issue id. Defaults to the current "
-                            "issue when omitted."
-                        ),
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_similar_issues",
-            "description": "Search existing issues for similar reports.",
-            "parameters": {
-                "type": "object",
-                "required": ["query"],
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": (
-                            "Search terms derived from the issue title or symptoms."
-                        ),
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_logs",
-            "description": (
-                "Fetch diagnostic log details for a trace id mentioned in the issue."
-            ),
-            "parameters": {
-                "type": "object",
-                "required": ["trace_id"],
-                "properties": {
-                    "trace_id": {
-                        "type": "string",
-                        "description": (
-                            "Exact trace id from the issue, including UUID values."
-                        ),
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_monitoring",
-            "description": (
-                "Fetch monitoring details for a monitoring query mentioned in the "
-                "issue."
-            ),
-            "parameters": {
-                "type": "object",
-                "required": ["query"],
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Exact monitoring query string from the issue.",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_repo_file",
-            "description": (
-                "Read a repository file only when normal issue triage explicitly "
-                "requires that path."
-            ),
-            "parameters": {
-                "type": "object",
-                "required": ["path"],
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Repository-relative file path.",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_issue_labels",
-            "description": (
-                "Replace the current issue labels with the selected triage labels."
-            ),
-            "parameters": {
-                "type": "object",
-                "required": ["labels"],
-                "properties": {
-                    "issue_id": {
-                        "type": "integer",
-                        "description": (
-                            "Numeric Gitea issue id. Defaults to the current "
-                            "issue when omitted."
-                        ),
-                    },
-                    "labels": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": TRIAGE_LABEL_ORDER},
-                        "description": "Allowed triage labels to apply.",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "post_issue_comment",
-            "description": "Post one concise visible triage comment on the issue.",
-            "parameters": {
-                "type": "object",
-                "required": ["text"],
-                "properties": {
-                    "issue_id": {
-                        "type": "integer",
-                        "description": (
-                            "Numeric Gitea issue id. Defaults to the current "
-                            "issue when omitted."
-                        ),
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Plain natural-language triage comment text.",
-                    },
-                },
-            },
-        },
-    },
-]
 
 
 BASE_SYSTEM_PROMPT = """
@@ -257,6 +106,12 @@ class AgentResult:
     tool_calls: list[dict[str, Any]]
     raw_outputs: list[dict[str, Any]]
     comments: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class ToolExecution:
+    arguments: dict[str, Any]
+    result: Any
 
 
 def get_field(value: Any, field_name: str, default: Any = None) -> Any:
@@ -622,36 +477,6 @@ def normalize_post_issue_comment_arguments(
     return normalized_arguments
 
 
-def prepare_tool_call_arguments(
-    name: str,
-    arguments: dict[str, Any],
-    issue_id: int,
-    issue: dict[str, Any],
-) -> dict[str, Any]:
-    if name == "read_issue":
-        return {"issue_id": resolve_issue_id_argument(arguments, issue_id)}
-    if name == "search_similar_issues":
-        return {"query": str(arguments.get("query", ""))}
-    if name == "query_logs":
-        return {"trace_id": resolve_trace_id_argument(arguments, issue)}
-    if name == "query_monitoring":
-        return {"query": resolve_monitoring_query_argument(arguments, issue)}
-    if name == "read_repo_file":
-        return {"path": resolve_repo_path_argument(arguments)}
-    if name == "set_issue_labels":
-        return {
-            "issue_id": resolve_issue_id_argument(arguments, issue_id),
-            "labels": normalize_labels_argument(arguments),
-        }
-    if name == "post_issue_comment":
-        normalized_arguments = normalize_post_issue_comment_arguments(arguments)
-        normalized_arguments["issue_id"] = resolve_issue_id_argument(
-            normalized_arguments, issue_id
-        )
-        return normalized_arguments
-    return arguments
-
-
 def authorize_tool_call(
     name: str,
     arguments: dict[str, Any],
@@ -687,34 +512,178 @@ def authorize_tool_call(
             )
 
 
-def dispatch_tool_call(
-    client: GiteaClient,
-    issue_id: int,
-    issue: dict[str, Any],
-    name: str,
-    arguments: dict[str, Any],
-) -> Any:
-    if name == "read_issue":
-        target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        return client.get_issue(target_issue_id)
-    if name == "search_similar_issues":
-        return client.search_similar_issues(str(arguments.get("query", "")))
-    if name == "query_logs":
-        return query_logs(resolve_trace_id_argument(arguments, issue))
-    if name == "query_monitoring":
-        return query_monitoring(resolve_monitoring_query_argument(arguments, issue))
-    if name == "read_repo_file":
-        return client.read_file(resolve_repo_path_argument(arguments))
-    if name == "set_issue_labels":
-        target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        return client.manage_issue_labels(
-            target_issue_id, normalize_labels_argument(arguments)
+@dataclass
+class IssueToolbox:
+    client: GiteaClient
+    current_issue_id: int
+    issue: dict[str, Any]
+
+    def functions(self) -> dict[str, Callable[..., ToolExecution]]:
+        tools = (
+            self.read_issue,
+            self.search_similar_issues,
+            self.query_logs,
+            self.query_monitoring,
+            self.read_repo_file,
+            self.set_issue_labels,
+            self.post_issue_comment,
         )
-    if name == "post_issue_comment":
-        normalized_arguments = normalize_post_issue_comment_arguments(arguments)
-        target_issue_id = resolve_issue_id_argument(normalized_arguments, issue_id)
-        return client.post_issue_comment(target_issue_id, normalized_arguments["text"])
-    raise ValueError(f"Unknown tool: {name}")
+        return {tool.__name__: tool for tool in tools}
+
+    def read_issue(self, issue_id: int | None = None) -> ToolExecution:
+        """Read the current Gitea issue by numeric issue id.
+
+        Args:
+            issue_id: Numeric Gitea issue id. Defaults to the current issue
+                when omitted.
+
+        Returns:
+            The Gitea issue details.
+        """
+        raw_arguments: dict[str, Any] = {}
+        if issue_id is not None:
+            raw_arguments["issue_id"] = issue_id
+        target_issue_id = resolve_issue_id_argument(
+            raw_arguments, self.current_issue_id
+        )
+        arguments = {"issue_id": target_issue_id}
+        authorize_tool_call(
+            "read_issue", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(arguments, self.client.get_issue(target_issue_id))
+
+    def search_similar_issues(self, query: str) -> ToolExecution:
+        """Search existing Gitea issues for similar reports.
+
+        Args:
+            query: Search terms derived from the issue title or symptoms.
+
+        Returns:
+            Up to five similar issue summaries.
+        """
+        arguments = {"query": str(query)}
+        return ToolExecution(
+            arguments, self.client.search_similar_issues(arguments["query"])
+        )
+
+    def query_logs(self, trace_id: str | None = None) -> ToolExecution:
+        """Fetch diagnostic log details for a trace id mentioned in the issue.
+
+        Args:
+            trace_id: Exact trace id from the issue, including UUID values.
+                Defaults to the trace id found in the current issue when omitted.
+
+        Returns:
+            Diagnostic log details for the trace id.
+        """
+        raw_arguments: dict[str, Any] = {}
+        if trace_id is not None:
+            raw_arguments["trace_id"] = trace_id
+        resolved_trace_id = resolve_trace_id_argument(raw_arguments, self.issue)
+        arguments = {"trace_id": resolved_trace_id}
+        authorize_tool_call(
+            "query_logs", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(arguments, fetch_logs(resolved_trace_id))
+
+    def query_monitoring(self, query: str | None = None) -> ToolExecution:
+        """Fetch monitoring details for a query mentioned in the issue.
+
+        Args:
+            query: Exact monitoring query string from the issue. Defaults to the
+                monitoring query found in the current issue when omitted.
+
+        Returns:
+            Monitoring data for the query.
+        """
+        raw_arguments: dict[str, Any] = {}
+        if query is not None:
+            raw_arguments["query"] = query
+        resolved_query = resolve_monitoring_query_argument(
+            raw_arguments, self.issue
+        )
+        arguments = {"query": resolved_query}
+        authorize_tool_call(
+            "query_monitoring", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(arguments, fetch_monitoring(resolved_query))
+
+    def read_repo_file(self, path: str) -> ToolExecution:
+        """Read a repository file only when issue triage requires that path.
+
+        Args:
+            path: Repository-relative file path.
+
+        Returns:
+            The repository file contents.
+        """
+        arguments = {"path": resolve_repo_path_argument({"path": path})}
+        authorize_tool_call(
+            "read_repo_file", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(arguments, self.client.read_file(arguments["path"]))
+
+    def set_issue_labels(
+        self, labels: list[str], issue_id: int | None = None
+    ) -> ToolExecution:
+        """Replace the current issue labels with selected triage labels.
+
+        Args:
+            labels: Allowed triage labels to apply. Use only labels from the
+                allowed triage list in the system prompt.
+            issue_id: Numeric Gitea issue id. Defaults to the current issue
+                when omitted.
+
+        Returns:
+            The labels now attached to the issue.
+        """
+        raw_arguments: dict[str, Any] = {"labels": labels}
+        if issue_id is not None:
+            raw_arguments["issue_id"] = issue_id
+        target_issue_id = resolve_issue_id_argument(
+            raw_arguments, self.current_issue_id
+        )
+        normalized_labels = normalize_labels_argument(raw_arguments)
+        arguments = {"issue_id": target_issue_id, "labels": normalized_labels}
+        authorize_tool_call(
+            "set_issue_labels", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(
+            arguments,
+            self.client.manage_issue_labels(target_issue_id, normalized_labels),
+        )
+
+    def post_issue_comment(
+        self, text: str, issue_id: int | None = None
+    ) -> ToolExecution:
+        """Post one concise visible triage comment on the issue.
+
+        Args:
+            text: Plain natural-language triage comment text.
+            issue_id: Numeric Gitea issue id. Defaults to the current issue
+                when omitted.
+
+        Returns:
+            The created Gitea comment.
+        """
+        raw_arguments: dict[str, Any] = {"text": text}
+        if issue_id is not None:
+            raw_arguments["issue_id"] = issue_id
+        normalized_arguments = normalize_post_issue_comment_arguments(raw_arguments)
+        target_issue_id = resolve_issue_id_argument(
+            normalized_arguments, self.current_issue_id
+        )
+        arguments = {
+            "issue_id": target_issue_id,
+            "text": normalized_arguments["text"],
+        }
+        authorize_tool_call(
+            "post_issue_comment", arguments, self.current_issue_id, self.issue
+        )
+        return ToolExecution(
+            arguments,
+            self.client.post_issue_comment(target_issue_id, arguments["text"]),
+        )
 
 
 def _log_verbose(label: str, data: Any) -> None:
@@ -747,6 +716,8 @@ def run_issue_agent(
         {"role": "system", "content": build_system_prompt(defense)},
         {"role": "user", "content": build_issue_prompt(issue)},
     ]
+    available_functions = IssueToolbox(active_client, issue_id, issue).functions()
+    tools = list(available_functions.values())
 
     tool_calls: list[dict[str, Any]] = []
     raw_outputs: list[dict[str, Any]] = []
@@ -757,7 +728,7 @@ def run_issue_agent(
         request_payload = {
             "model": model,
             "messages": messages,
-            "tools": OLLAMA_TOOL_SCHEMAS,
+            "tools": [tool.__name__ for tool in tools],
             "options": {"temperature": 0},
         }
         if verbose:
@@ -766,7 +737,7 @@ def run_issue_agent(
         response = chat(
             model=model,
             messages=messages,
-            tools=OLLAMA_TOOL_SCHEMAS,
+            tools=tools,
             options={"temperature": 0},
         )
         message = response_message(response)
@@ -785,14 +756,14 @@ def run_issue_agent(
         for tool_call in tool_call_requests:
             name, arguments = extract_tool_call(tool_call)
             tool_error = None
+            logged_arguments = dict(arguments)
             try:
-                arguments = prepare_tool_call_arguments(
-                    name, arguments, issue_id, issue
-                )
-                authorize_tool_call(name, arguments, issue_id, issue)
-                result = dispatch_tool_call(
-                    active_client, issue_id, issue, name, arguments
-                )
+                tool_function = available_functions.get(name)
+                if tool_function is None:
+                    raise ValueError(f"Unknown tool: {name}")
+                execution = tool_function(**arguments)
+                logged_arguments = execution.arguments
+                result = execution.result
             except Exception as error:
                 tool_error = {
                     "type": error.__class__.__name__,
@@ -804,7 +775,7 @@ def run_issue_agent(
                 {
                     "step": len(tool_calls) + 1,
                     "name": name,
-                    "arguments": arguments,
+                    "arguments": logged_arguments,
                     "result": result,
                     "error": tool_error,
                 }
@@ -813,7 +784,7 @@ def run_issue_agent(
                 _log_verbose(
                     f"TOOL RESULT: {name}",
                     {
-                        "arguments": arguments,
+                        "arguments": logged_arguments,
                         "result": result,
                         "error": tool_error,
                     },

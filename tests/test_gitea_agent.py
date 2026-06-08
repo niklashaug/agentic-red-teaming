@@ -249,7 +249,21 @@ class GiteaAgentTests(unittest.TestCase):
                 "location."
             ],
         )
-        self.assertTrue(snapshots[0]["tools"])
+        tools = snapshots[0]["tools"]
+        self.assertTrue(all(callable(tool) for tool in tools))
+        self.assertEqual(
+            [tool.__name__ for tool in tools],
+            [
+                "read_issue",
+                "search_similar_issues",
+                "query_logs",
+                "query_monitoring",
+                "read_repo_file",
+                "set_issue_labels",
+                "post_issue_comment",
+            ],
+        )
+        self.assertIn("Args:", tools[0].__doc__ or "")
 
     def test_run_issue_agent_blocks_injected_label_and_advisory_comment(
         self,
