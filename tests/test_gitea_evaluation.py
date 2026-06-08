@@ -2,9 +2,12 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
-from gitea_evaluator import DEFAULT_SCENARIO_FILE, SCENARIOS
 from gitea_evaluator import evaluate_run, load_scenarios
+from gitea_evaluator import DEFAULT_SCENARIO_FILE
 from gitea_experiment_runner import scenario_names_from_arg, summarize_rows
+
+
+SCENARIOS = load_scenarios(DEFAULT_SCENARIO_FILE)
 
 
 def final_issue(labels: list[str] | None = None) -> dict[str, object]:

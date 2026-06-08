@@ -5,19 +5,25 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from gitea_tools import (
     GiteaClient,
-    default_gitea_client,
+    gitea_client,
     normalize_trace_id,
     query_monitoring,
     query_logs,
 )
 
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "mistral")
+SUPPORTED_MODELS = ("gemma4:12b", "llama3.2", "gpt-oss:20b")
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+MODEL_HELP = (
+    "Ollama model to use. "
+    f"Recommended candidates: {', '.join(SUPPORTED_MODELS)}. "
+    f"Defaults to {DEFAULT_MODEL}."
+)
 ALLOWED_TRIAGE_LABELS = {
     "bug",
     "needs-info",
@@ -132,6 +138,12 @@ class AgentResult:
     raw_outputs: list[str]
     comments: list[dict[str, Any]]
     final_message: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    name: ToolName
+    arguments: dict[str, Any]
 
 
 class ModelOutputParseError(ValueError):
@@ -305,10 +317,11 @@ def execute_visible_action(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     tool_error = None
+    logged_arguments = arguments
     try:
-        result = dispatch_tool_call(
-            client, issue_id, {"number": issue_id}, name, arguments
-        )
+        tool_call = prepare_tool_call(name, arguments, issue_id, {"number": issue_id})
+        logged_arguments = tool_call.arguments
+        result = dispatch_tool_call(client, tool_call)
     except Exception as error:
         tool_error = {
             "type": error.__class__.__name__,
@@ -319,7 +332,7 @@ def execute_visible_action(
     return {
         "step": step,
         "name": name,
-        "arguments": arguments,
+        "arguments": logged_arguments,
         "result": result,
         "error": tool_error,
         "materialized_from_final": True,
@@ -359,34 +372,92 @@ def materialize_final_decision(
     return materialized_actions
 
 
-def dispatch_tool_call(
-    client: GiteaClient,
-    issue_id: int,
-    issue: dict[str, Any],
+def prepare_tool_call(
     name: ToolName,
     arguments: dict[str, Any],
-) -> Any:
+    issue_id: int,
+    issue: dict[str, Any],
+) -> PreparedToolCall:
     if name == "read_issue":
-        target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        return client.get_issue(target_issue_id)
-    if name == "search_similar_issues":
-        return client.search_similar_issues(str(arguments.get("query", "")))
-    if name == "query_logs":
-        return query_logs(resolve_trace_id_argument(arguments, issue))
-    if name == "query_monitoring":
-        return query_monitoring(resolve_monitoring_query_argument(arguments, issue))
-    if name == "read_repo_file":
-        return client.read_file(resolve_repo_path_argument(arguments))
-    if name == "set_issue_labels":
-        target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        return client.manage_issue_labels(
-            target_issue_id, normalize_labels_argument(arguments)
-        )
-    if name == "post_issue_comment":
-        target_issue_id = resolve_issue_id_argument(arguments, issue_id)
-        text = arguments.get("text", arguments.get("body", ""))
-        return client.post_issue_comment(target_issue_id, str(text))
-    raise ValueError(f"Unknown tool: {name}")
+        normalized = {"issue_id": resolve_issue_id_argument(arguments, issue_id)}
+    elif name == "search_similar_issues":
+        normalized = {"query": str(arguments.get("query", ""))}
+    elif name == "query_logs":
+        normalized = {"trace_id": resolve_trace_id_argument(arguments, issue)}
+    elif name == "query_monitoring":
+        normalized = {"query": resolve_monitoring_query_argument(arguments, issue)}
+    elif name == "read_repo_file":
+        normalized = {"path": resolve_repo_path_argument(arguments)}
+    elif name == "set_issue_labels":
+        normalized = {
+            "issue_id": resolve_issue_id_argument(arguments, issue_id),
+            "labels": normalize_labels_argument(arguments),
+        }
+    elif name == "post_issue_comment":
+        normalized = {
+            "issue_id": resolve_issue_id_argument(arguments, issue_id),
+            "text": str(arguments.get("text", arguments.get("body", ""))),
+        }
+    else:
+        normalized = dict(arguments)
+    return PreparedToolCall(name=name, arguments=normalized)
+
+
+def _dispatch_read_issue(client: GiteaClient, arguments: dict[str, Any]) -> Any:
+    return client.get_issue(int(arguments["issue_id"]))
+
+
+def _dispatch_search_similar_issues(
+    client: GiteaClient, arguments: dict[str, Any]
+) -> Any:
+    return client.search_similar_issues(str(arguments["query"]))
+
+
+def _dispatch_query_logs(client: GiteaClient, arguments: dict[str, Any]) -> Any:
+    return query_logs(arguments["trace_id"])
+
+
+def _dispatch_query_monitoring(client: GiteaClient, arguments: dict[str, Any]) -> Any:
+    return query_monitoring(str(arguments["query"]))
+
+
+def _dispatch_read_repo_file(client: GiteaClient, arguments: dict[str, Any]) -> Any:
+    return client.read_file(str(arguments["path"]))
+
+
+def _dispatch_set_issue_labels(client: GiteaClient, arguments: dict[str, Any]) -> Any:
+    return client.manage_issue_labels(
+        int(arguments["issue_id"]),
+        list(arguments["labels"]),
+    )
+
+
+def _dispatch_post_issue_comment(
+    client: GiteaClient, arguments: dict[str, Any]
+) -> Any:
+    return client.post_issue_comment(
+        int(arguments["issue_id"]),
+        str(arguments["text"]),
+    )
+
+
+ToolDispatcher = Callable[[GiteaClient, dict[str, Any]], Any]
+TOOL_DISPATCHERS: dict[ToolName, ToolDispatcher] = {
+    "read_issue": _dispatch_read_issue,
+    "search_similar_issues": _dispatch_search_similar_issues,
+    "query_logs": _dispatch_query_logs,
+    "query_monitoring": _dispatch_query_monitoring,
+    "read_repo_file": _dispatch_read_repo_file,
+    "set_issue_labels": _dispatch_set_issue_labels,
+    "post_issue_comment": _dispatch_post_issue_comment,
+}
+
+
+def dispatch_tool_call(
+    client: GiteaClient,
+    tool_call: PreparedToolCall,
+) -> Any:
+    return TOOL_DISPATCHERS[tool_call.name](client, tool_call.arguments)
 
 
 def run_issue_agent(
@@ -404,7 +475,7 @@ def run_issue_agent(
             "The 'ollama' package is not installed. Run 'uv sync' before experiments."
         ) from error
 
-    active_client = client or default_gitea_client()
+    active_client = client or gitea_client("bot")
     issue = active_client.get_issue(issue_id)
     messages = [
         {"role": "system", "content": build_system_prompt(defense)},
@@ -437,9 +508,9 @@ def run_issue_agent(
         arguments = parsed["arguments"]
         tool_error = None
         try:
-            result = dispatch_tool_call(
-                active_client, issue_id, issue, name, arguments
-            )
+            tool_call = prepare_tool_call(name, arguments, issue_id, issue)
+            arguments = tool_call.arguments
+            result = dispatch_tool_call(active_client, tool_call)
         except Exception as error:
             tool_error = {
                 "type": error.__class__.__name__,
@@ -495,7 +566,7 @@ def parse_args() -> argparse.Namespace:
         description="Run the Gitea-backed triage agent once."
     )
     parser.add_argument("issue_id", type=int)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=MODEL_HELP)
     parser.add_argument("--defense", choices=["none", "prompt"], default="none")
     parser.add_argument("--max-steps", type=int, default=6)
     return parser.parse_args()

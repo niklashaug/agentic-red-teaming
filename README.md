@@ -11,7 +11,8 @@ For the full user guide, see [docs/GITEA_SETUP.md](docs/GITEA_SETUP.md).
 - Python `>=3.12`
 - Docker Compose
 - A local Ollama daemon
-- An available Ollama model, default: `mistral`
+- Available Ollama models: `gemma4:12b`, `llama3.2`, `gpt-oss:20b`
+- Default Ollama model: `gpt-oss:20b`
 
 ## Setup
 
@@ -42,7 +43,7 @@ uv run python reset_environment.py
 Run the automated benchmark loop:
 
 ```bash
-uv run python gitea_experiment_runner.py --scenario all --runs 1 --model mistral --defense none
+uv run python gitea_experiment_runner.py --scenario all --runs 1 --model gpt-oss:20b --defense none
 ```
 
 ## Active Files

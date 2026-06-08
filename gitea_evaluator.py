@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from gitea_tools import normalize_trace_id
 
@@ -46,71 +47,76 @@ VALID_SCENARIO_TYPES = {
 VALID_PAYLOAD_SOURCES = {"issue", "logs", "monitoring", "none"}
 
 
-@dataclass(frozen=True)
-class Scenario:
+class Scenario(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     name: str
     scenario_type: str
     is_attack: bool
     payload_source: str
     title: str
     body: str
-    allowed_labels: set[str]
+    allowed_labels: set[str] = Field(default_factory=set)
     trace_id: str | None = None
     monitoring_query: str | None = None
-    allowed_repo_paths: set[str] = field(default_factory=set)
+    allowed_repo_paths: set[str] = Field(default_factory=set)
     payload_starts_in_issue: bool = False
 
+    @field_validator("name", "scenario_type", "payload_source", "title", "body")
+    @classmethod
+    def require_non_empty_string(cls, value: str, info: Any) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"Scenario field '{info.field_name}' must be a non-empty string."
+            )
+        return value
 
-def require_string(payload: dict[str, Any], field_name: str) -> str:
-    value = payload.get(field_name)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Scenario field '{field_name}' must be a non-empty string.")
-    return value
+    @field_validator("is_attack", mode="before")
+    @classmethod
+    def require_boolean(cls, value: Any) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError("Scenario field 'is_attack' must be a boolean.")
+        return value
 
+    @field_validator("scenario_type")
+    @classmethod
+    def require_valid_scenario_type(cls, value: str) -> str:
+        if value not in VALID_SCENARIO_TYPES:
+            raise ValueError(
+                "Scenario field 'scenario_type' must be one of: "
+                f"{', '.join(sorted(VALID_SCENARIO_TYPES))}."
+            )
+        return value
 
-def string_set(payload: dict[str, Any], field_name: str) -> set[str]:
-    values = payload.get(field_name, [])
-    if not isinstance(values, list) or any(
-        not isinstance(value, str) for value in values
-    ):
-        raise ValueError(f"Scenario field '{field_name}' must be a list of strings.")
-    return set(values)
+    @field_validator("payload_source")
+    @classmethod
+    def require_valid_payload_source(cls, value: str) -> str:
+        if value not in VALID_PAYLOAD_SOURCES:
+            raise ValueError(
+                "Scenario field 'payload_source' must be one of: "
+                f"{', '.join(sorted(VALID_PAYLOAD_SOURCES))}."
+            )
+        return value
 
-
-def require_choice(
-    payload: dict[str, Any], field_name: str, allowed_values: set[str]
-) -> str:
-    value = require_string(payload, field_name)
-    if value not in allowed_values:
-        raise ValueError(
-            f"Scenario field '{field_name}' must be one of: "
-            f"{', '.join(sorted(allowed_values))}."
-        )
-    return value
+    @field_validator("allowed_labels", "allowed_repo_paths", mode="before")
+    @classmethod
+    def require_string_set(cls, value: Any, info: Any) -> set[str]:
+        if value is None:
+            return set()
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) for item in value
+        ):
+            raise ValueError(
+                f"Scenario field '{info.field_name}' must be a list of strings."
+            )
+        return set(value)
 
 
 def scenario_from_payload(payload: dict[str, Any]) -> Scenario:
-    is_attack = payload.get("is_attack")
-    if not isinstance(is_attack, bool):
-        raise ValueError("Scenario field 'is_attack' must be a boolean.")
-
-    return Scenario(
-        name=require_string(payload, "name"),
-        scenario_type=require_choice(
-            payload, "scenario_type", VALID_SCENARIO_TYPES
-        ),
-        is_attack=is_attack,
-        payload_source=require_choice(
-            payload, "payload_source", VALID_PAYLOAD_SOURCES
-        ),
-        title=require_string(payload, "title"),
-        body=require_string(payload, "body"),
-        trace_id=payload.get("trace_id"),
-        monitoring_query=payload.get("monitoring_query"),
-        allowed_labels=string_set(payload, "allowed_labels"),
-        allowed_repo_paths=string_set(payload, "allowed_repo_paths"),
-        payload_starts_in_issue=bool(payload.get("payload_starts_in_issue", False)),
-    )
+    try:
+        return Scenario.model_validate(payload)
+    except ValidationError as error:
+        raise ValueError(str(error)) from error
 
 
 def load_scenarios(path: Path = DEFAULT_SCENARIO_FILE) -> dict[str, Scenario]:
@@ -129,10 +135,6 @@ def load_scenarios(path: Path = DEFAULT_SCENARIO_FILE) -> dict[str, Scenario]:
     if not scenarios:
         raise ValueError("Scenario file must contain at least one scenario.")
     return scenarios
-
-
-SCENARIOS = load_scenarios()
-
 
 def stringify(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, default=str)
