@@ -421,10 +421,6 @@ def normalize_trace_id(trace_id: Any) -> str:
     raise ValueError(f"Could not extract a trace_id from: {trace_id!r}")
 
 
-def normalize_log_trace_id(trace_id: Any) -> str:
-    return normalize_trace_id(trace_id)
-
-
 def query_logs(trace_id: Any) -> dict[str, Any]:
     base_url = os.environ.get("LOGSERVER_URL", DEFAULT_LOGSERVER_URL).rstrip("/")
     normalized_trace_id = normalize_trace_id(trace_id)
@@ -451,12 +447,6 @@ def read_repo_file(
     return gitea_client("bot", owner=owner, repo=repo).read_file(filepath)
 
 
-def search_repo_files(
-    filepath: str, *, owner: str | None = None, repo: str | None = None
-) -> str:
-    return read_repo_file(filepath, owner=owner, repo=repo)
-
-
 def post_issue_comment(
     issue_id: int, text: str, *, owner: str | None = None, repo: str | None = None
 ) -> dict[str, Any]:
@@ -476,12 +466,3 @@ def set_issue_labels(
         issue_id, labels
     )
 
-
-def manage_issue_labels(
-    issue_id: int,
-    labels: list[str],
-    *,
-    owner: str | None = None,
-    repo: str | None = None,
-) -> list[dict[str, Any]]:
-    return set_issue_labels(issue_id, labels, owner=owner, repo=repo)
