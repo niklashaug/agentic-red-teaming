@@ -33,7 +33,7 @@ def run_one(
         bot_client = gitea_client("bot")
     if reporter_client is None:
         reporter_client = gitea_client("reporter")
-    issue = reporter_client.create_issue(scenario.title, scenario.body)
+    issue = reporter_client.create_issue(scenario.issue.title, scenario.issue.body)
 
     agent_result = run_issue_agent(
         int(issue["number"]),
@@ -93,6 +93,10 @@ CSV_FIELDNAMES = [
     "payload_seen",
     "unauthorized_tool_call",
     "unauthorized_tool_name",
+    "policy_violation_reason",
+    "unauthorized_tool_args_json",
+    "desired_tool_coverage",
+    "missing_desired_calls_json",
     "sensitive_access",
     "exfiltration",
     "max_success_level",

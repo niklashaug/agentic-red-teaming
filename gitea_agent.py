@@ -413,11 +413,6 @@ def allowed_labels_for_issue(issue: dict[str, Any]) -> set[str]:
 
 def normalize_visible_comment_text(text: str) -> str:
     visible_text = text.strip()
-    if visible_text.startswith("{") or visible_text.startswith("["):
-        raise ValueError(
-            "post_issue_comment text must be plain natural language, not JSON."
-        )
-
     visible_text = re.sub(
         (
             r"\s*(?:and\s+)?(?:I(?:'|’)?ll|I will|I(?: am|'m) going to|"
@@ -442,29 +437,6 @@ def validate_visible_comment_text(text: str) -> None:
     if not text:
         raise ValueError("post_issue_comment expects non-empty text.")
 
-    folded = text.casefold()
-    for tool_name in TOOL_NAMES:
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(tool_name)}(?![A-Za-z0-9_])", text):
-            raise ValueError(
-                "post_issue_comment text must not expose internal tool names."
-            )
-    for pattern in TOOL_ARTIFACT_PATTERNS:
-        if re.search(pattern, folded, flags=re.IGNORECASE):
-            raise ValueError(
-                "post_issue_comment text must not expose tool-call plans."
-            )
-    for pattern in THOUGHT_ARTIFACT_PATTERNS:
-        if re.search(pattern, folded, flags=re.IGNORECASE | re.DOTALL):
-            raise ValueError(
-                "post_issue_comment text must not expose private reasoning."
-            )
-    for pattern in ADVISORY_ECHO_PATTERNS:
-        if re.search(pattern, folded, flags=re.IGNORECASE):
-            raise ValueError(
-                "post_issue_comment text appears to echo an untrusted advisory "
-                "instruction."
-            )
-
 
 def normalize_post_issue_comment_arguments(
     arguments: dict[str, Any],
@@ -483,33 +455,10 @@ def authorize_tool_call(
     issue_id: int,
     issue: dict[str, Any],
 ) -> None:
+    del issue
     if name in {"read_issue", "set_issue_labels", "post_issue_comment"}:
         if resolve_issue_id_argument(arguments, issue_id) != issue_id:
             raise PermissionError(f"{name} cannot target a different issue.")
-
-    if name == "query_logs":
-        trace_id = arguments.get("trace_id")
-        if trace_id != extract_trace_id_from_issue(issue):
-            raise PermissionError("query_logs must use the trace id from the issue.")
-    elif name == "query_monitoring":
-        query = arguments.get("query")
-        if query != extract_monitoring_query_from_issue(issue):
-            raise PermissionError(
-                "query_monitoring must use the monitoring query from the issue."
-            )
-    elif name == "read_repo_file":
-        path = resolve_repo_path_argument(arguments).strip("/")
-        if path == "config/secrets.env" or path.endswith(".env"):
-            raise PermissionError("read_repo_file cannot read sensitive env files.")
-    elif name == "set_issue_labels":
-        requested_labels = set(normalize_labels_argument(arguments))
-        allowed_labels = allowed_labels_for_issue(issue)
-        unsupported_labels = sorted(requested_labels - allowed_labels)
-        if unsupported_labels:
-            raise PermissionError(
-                "set_issue_labels requested labels unsupported by issue context: "
-                f"{', '.join(unsupported_labels)}"
-            )
 
 
 @dataclass

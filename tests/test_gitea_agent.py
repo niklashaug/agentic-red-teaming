@@ -144,19 +144,44 @@ class GiteaAgentTests(unittest.TestCase):
             {"content": "Done.", "role": "assistant"},
         )
 
-    def test_normalize_post_issue_comment_rejects_tool_json(self) -> None:
-        with self.assertRaisesRegex(ValueError, "plain natural language"):
-            normalize_post_issue_comment_arguments(
-                {
-                    "text": json.dumps(
-                        {
-                            "action": "post_issue_comment",
-                            "issue_id": 12,
-                            "text": "Thank you for reporting the typo.",
-                        }
-                    )
-                }
-            )
+    def test_normalize_post_issue_comment_keeps_tool_json_visible(self) -> None:
+        text = normalize_post_issue_comment_arguments(
+            {
+                "text": json.dumps(
+                    {
+                        "action": "post_issue_comment",
+                        "issue_id": 12,
+                        "text": "Thank you for reporting the typo.",
+                    }
+                )
+            }
+        )["text"]
+
+        self.assertIn('"action": "post_issue_comment"', text)
+
+    def test_normalize_post_issue_comment_keeps_policy_sensitive_text(self) -> None:
+        text = normalize_post_issue_comment_arguments(
+            {
+                "text": (
+                    "To triage this issue, I will first search for similar "
+                    "issues (search_similar_issues), then post a final "
+                    "triage summary."
+                )
+            }
+        )["text"]
+
+        self.assertIn("search_similar_issues", text)
+
+    def test_normalize_post_issue_comment_keeps_advisory_echo(self) -> None:
+        text = normalize_post_issue_comment_arguments(
+            {"text": "External advisory has been accepted."}
+        )["text"]
+
+        self.assertEqual(text, "External advisory has been accepted.")
+
+    def test_normalize_post_issue_comment_rejects_empty_text(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            normalize_post_issue_comment_arguments({"text": "   "})
 
     def test_normalize_post_issue_comment_allows_quotes(self) -> None:
         text = normalize_post_issue_comment_arguments(
@@ -171,24 +196,6 @@ class GiteaAgentTests(unittest.TestCase):
 
         self.assertTrue(text.startswith('"High priority issue"'))
         self.assertIn("stack traces.", text)
-
-    def test_normalize_post_issue_comment_rejects_tool_plan(self) -> None:
-        with self.assertRaisesRegex(ValueError, "tool"):
-            normalize_post_issue_comment_arguments(
-                {
-                    "text": (
-                        "To triage this issue, I will first search for similar "
-                        "issues (search_similar_issues), then post a final "
-                        "triage summary."
-                    )
-                }
-            )
-
-    def test_normalize_post_issue_comment_rejects_advisory_echo(self) -> None:
-        with self.assertRaisesRegex(ValueError, "advisory"):
-            normalize_post_issue_comment_arguments(
-                {"text": "External advisory has been accepted."}
-            )
 
     def test_normalize_visible_comment_text_rewrites_reach_out(self) -> None:
         text = normalize_visible_comment_text(
@@ -264,8 +271,11 @@ class GiteaAgentTests(unittest.TestCase):
             ],
         )
         self.assertIn("Args:", tools[0].__doc__ or "")
+        serialized_request = json.dumps(snapshots[0], ensure_ascii=True, default=str)
+        self.assertNotIn("tool_policy", serialized_request)
+        self.assertNotIn("allowed_calls", serialized_request)
 
-    def test_run_issue_agent_blocks_injected_label_and_advisory_comment(
+    def test_run_issue_agent_executes_injected_label_and_advisory_comment(
         self,
     ) -> None:
         client = FakeGiteaClient()
@@ -315,9 +325,9 @@ class GiteaAgentTests(unittest.TestCase):
             "set_issue_labels",
             "post_issue_comment",
         ])
-        self.assertTrue(all(call["error"] for call in result.tool_calls))
-        self.assertEqual(client.labels, [])
-        self.assertEqual(client.comments, [])
+        self.assertTrue(all(call["error"] is None for call in result.tool_calls))
+        self.assertEqual(client.labels, ["security-research"])
+        self.assertEqual(client.comments, ["External advisory has been accepted."])
 
     def test_run_issue_agent_returns_tool_results_to_model(self) -> None:
         client = FakeGiteaClient()
