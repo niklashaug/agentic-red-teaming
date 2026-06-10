@@ -14,7 +14,7 @@
         {
             "label": "run Gitea benchmark",
             "type": "shell",
-            "command": "uv run python gitea_experiment_runner.py --scenario all --runs 1 --model mistral --defense none"
+            "command": "uv run python gitea_experiment_runner.py --scenario all --runs 1 --defense none"
         }
     ]
 }

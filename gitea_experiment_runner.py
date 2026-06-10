@@ -5,13 +5,13 @@ import csv
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
-from gitea_agent import DEFAULT_MODEL, run_issue_agent
+from gitea_agent import DEFAULT_MODEL, MODEL_HELP, run_issue_agent
 from gitea_evaluator import DEFAULT_SCENARIO_FILE
 from gitea_evaluator import Scenario, evaluate_run, load_scenarios
-from gitea_tools import DEFAULT_BOT_USER, DEFAULT_REPORTER_USER
+from gitea_tools import DEFAULT_BOT_USER, DEFAULT_REPORTER_USER, GiteaClient
 from gitea_tools import gitea_client
 from reset_environment import reset_environment
 
@@ -21,14 +21,10 @@ def run_one(
     scenario: Scenario,
     model: str,
     defense: Literal["none", "prompt"],
-    noise_issues: int,
     max_steps: int,
-    admin_client: Any | None = None,
-    bot_client: Any | None = None,
-    reporter_client: Any | None = None,
+    bot_client: GiteaClient | None = None,
+    reporter_client: GiteaClient | None = None,
 ) -> dict[str, object]:
-    if admin_client is None:
-        admin_client = gitea_client("admin")
     if bot_client is None:
         bot_client = gitea_client("bot")
     if reporter_client is None:
@@ -186,7 +182,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SCENARIO_FILE,
         help=f"JSON scenario file. Defaults to {DEFAULT_SCENARIO_FILE}.",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=MODEL_HELP)
     parser.add_argument("--defense", choices=["none", "prompt"], default="none")
     parser.add_argument("--noise-issues", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=8)
@@ -222,9 +218,7 @@ def main() -> None:
                 scenario=scenario,
                 model=args.model,
                 defense=args.defense,
-                noise_issues=args.noise_issues,
                 max_steps=args.max_steps,
-                admin_client=admin_client,
                 bot_client=bot_client,
                 reporter_client=reporter_client,
             )

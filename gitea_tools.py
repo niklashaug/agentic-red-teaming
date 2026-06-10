@@ -7,9 +7,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
-from urllib.parse import quote, urlencode, urljoin
-from urllib.request import Request, urlopen
+from urllib.parse import quote, urljoin
+
+import httpx
 
 
 DEFAULT_GITEA_URL = "http://localhost:3000"
@@ -18,7 +18,6 @@ DEFAULT_OWNER = "research-admin"
 DEFAULT_BOT_USER = "triage-bot"
 DEFAULT_REPORTER_USER = "issue-reporter"
 DEFAULT_REPO = "issue-triage-lab"
-DEFAULT_TOKEN_FILE = Path(".runtime/gitea/token")
 DEFAULT_ADMIN_TOKEN_FILE = Path(".runtime/gitea/admin-token")
 DEFAULT_BOT_TOKEN_FILE = Path(".runtime/gitea/bot-token")
 DEFAULT_REPORTER_TOKEN_FILE = Path(".runtime/gitea/reporter-token")
@@ -64,13 +63,16 @@ def load_gitea_token(
         return token
 
     if token_file is None:
-        token_file = TOKEN_FILES.get(role, DEFAULT_TOKEN_FILE)
+        try:
+            token_file = TOKEN_FILES[role]
+        except KeyError as error:
+            raise RuntimeError(
+                f"Unknown Gitea token role '{role}'. "
+                f"Known roles: {', '.join(sorted(TOKEN_FILES))}."
+            ) from error
 
     if token_file.exists():
         return token_file.read_text(encoding="utf-8").strip()
-
-    if DEFAULT_TOKEN_FILE.exists():
-        return DEFAULT_TOKEN_FILE.read_text(encoding="utf-8").strip()
 
     raise RuntimeError(
         f"No Gitea token configured for role '{role}'. "
@@ -104,14 +106,13 @@ def decode_gitea_content_payload(payload: dict[str, Any]) -> str:
     return base64.b64decode(compact_content).decode("utf-8")
 
 
-def _read_response(response: Any) -> Any:
-    raw = response.read().decode("utf-8")
-    if not raw:
+def _read_response(response: httpx.Response) -> Any:
+    if not response.content:
         return None
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
+        return response.json()
+    except ValueError:
+        return response.text
 
 
 def _request_json(
@@ -120,30 +121,25 @@ def _request_json(
     *,
     token: str | None = None,
     payload: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
     expected_statuses: tuple[int, ...] = (200,),
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> Any:
-    data = None
     headers = {"Accept": "application/json"}
-    if payload is not None:
-        data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = f"token {token}"
 
-    request = Request(url, data=data, headers=headers, method=method)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            status = response.status
-            body = _read_response(response)
-    except HTTPError as error:
-        body = _read_response(error)
-        if error.code in expected_statuses:
-            return body
-        raise GiteaApiError(error.code, str(error.reason), body) from error
+    request_kwargs: dict[str, Any] = {"params": params}
+    if payload is not None:
+        request_kwargs["json"] = payload
 
-    if status not in expected_statuses:
-        raise GiteaApiError(status, "unexpected response status", body)
+    with httpx.Client(headers=headers, timeout=timeout) as client:
+        response = client.request(method, url, **request_kwargs)
+
+    body = _read_response(response)
+    if response.status_code not in expected_statuses:
+        message = response.reason_phrase or "unexpected response status"
+        raise GiteaApiError(response.status_code, message, body)
     return body
 
 
@@ -388,12 +384,6 @@ def gitea_client(
     return GiteaClient(load_gitea_settings(owner=owner, repo=repo, role=role))
 
 
-def default_gitea_client(
-    *, owner: str | None = None, repo: str | None = None
-) -> GiteaClient:
-    return gitea_client("bot", owner=owner, repo=repo)
-
-
 def normalize_trace_id(trace_id: Any) -> str:
     if isinstance(trace_id, dict):
         for key in ("trace_id", "trace", "id"):
@@ -433,36 +423,9 @@ def query_logs(trace_id: Any) -> dict[str, Any]:
 
 def query_monitoring(query: str) -> dict[str, Any]:
     base_url = os.environ.get("LOGSERVER_URL", DEFAULT_LOGSERVER_URL).rstrip("/")
-    encoded_query = urlencode({"query": query})
     return _request_json(
         "GET",
-        f"{base_url}/api/monitoring?{encoded_query}",
+        f"{base_url}/api/monitoring",
+        params={"query": query},
         expected_statuses=(200,),
     )
-
-
-def read_repo_file(
-    filepath: str, *, owner: str | None = None, repo: str | None = None
-) -> str:
-    return gitea_client("bot", owner=owner, repo=repo).read_file(filepath)
-
-
-def post_issue_comment(
-    issue_id: int, text: str, *, owner: str | None = None, repo: str | None = None
-) -> dict[str, Any]:
-    return gitea_client("bot", owner=owner, repo=repo).post_issue_comment(
-        issue_id, text
-    )
-
-
-def set_issue_labels(
-    issue_id: int,
-    labels: list[str],
-    *,
-    owner: str | None = None,
-    repo: str | None = None,
-) -> list[dict[str, Any]]:
-    return gitea_client("bot", owner=owner, repo=repo).manage_issue_labels(
-        issue_id, labels
-    )
-

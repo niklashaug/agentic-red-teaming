@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from gitea_tools import normalize_trace_id
 
@@ -42,29 +43,70 @@ VALID_SCENARIO_TYPES = {
 VALID_PAYLOAD_SOURCES = {"issue", "logs", "monitoring", "none"}
 
 
-@dataclass(frozen=True)
-class IssueSpec:
+class FrozenModel(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+def require_non_empty_string(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Scenario field '{field_name}' must be a non-empty string.")
+    return value
+
+
+class IssueSpec(FrozenModel):
     title: str
     body: str
 
+    @field_validator("title", "body")
+    @classmethod
+    def validate_text(cls, value: str, info: Any) -> str:
+        return require_non_empty_string(value, f"issue.{info.field_name}")
 
-@dataclass(frozen=True)
-class AttackSpec:
+
+class AttackSpec(FrozenModel):
     is_attack: bool
     payload_source: str
     payload_starts_in_issue: bool = False
 
+    @field_validator("is_attack", mode="before")
+    @classmethod
+    def require_boolean(cls, value: Any) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError("Scenario field 'attack.is_attack' must be a boolean.")
+        return value
 
-@dataclass(frozen=True)
-class ContextSpec:
+    @field_validator("payload_source")
+    @classmethod
+    def require_valid_payload_source(cls, value: str) -> str:
+        value = require_non_empty_string(value, "attack.payload_source")
+        if value not in VALID_PAYLOAD_SOURCES:
+            raise ValueError(
+                "Scenario field 'attack.payload_source' must be one of: "
+                f"{', '.join(sorted(VALID_PAYLOAD_SOURCES))}."
+            )
+        return value
+
+
+class ContextSpec(FrozenModel):
     trace_id: str | None = None
     monitoring_query: str | None = None
 
+    @field_validator("trace_id", "monitoring_query")
+    @classmethod
+    def validate_optional_string(cls, value: str | None, info: Any) -> str | None:
+        if value is None:
+            return None
+        return require_non_empty_string(value, f"context.{info.field_name}")
 
-@dataclass(frozen=True)
-class ToolRule:
+
+class ToolRule(FrozenModel):
     tool: str
-    args: dict[str, Any] = field(default_factory=dict)
+    args: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("tool")
+    @classmethod
+    def validate_tool(cls, value: str) -> str:
+        return require_non_empty_string(value, "tool_policy.tool")
 
     def to_jsonable(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"tool": self.tool}
@@ -73,20 +115,24 @@ class ToolRule:
         return payload
 
 
-@dataclass(frozen=True)
-class ToolPolicy:
+class ToolPolicy(FrozenModel):
     allowed_calls: tuple[ToolRule, ...]
     desired_calls: tuple[ToolRule, ...] = ()
 
+    @field_validator("allowed_calls")
+    @classmethod
+    def require_allowed_calls(cls, value: tuple[ToolRule, ...]) -> tuple[ToolRule, ...]:
+        if not value:
+            raise ValueError("Scenario field 'tool_policy.allowed_calls' cannot be empty.")
+        return value
 
-@dataclass(frozen=True)
-class SensitiveResources:
-    repo_paths: set[str] = field(default_factory=lambda: set(DEFAULT_SENSITIVE_PATHS))
-    markers: set[str] = field(default_factory=lambda: set(DEFAULT_SENSITIVE_TERMS))
+
+class SensitiveResources(FrozenModel):
+    repo_paths: set[str] = Field(default_factory=lambda: set(DEFAULT_SENSITIVE_PATHS))
+    markers: set[str] = Field(default_factory=lambda: set(DEFAULT_SENSITIVE_TERMS))
 
 
-@dataclass(frozen=True)
-class Scenario:
+class Scenario(FrozenModel):
     name: str
     scenario_type: str
     issue: IssueSpec
@@ -94,6 +140,22 @@ class Scenario:
     context: ContextSpec
     tool_policy: ToolPolicy
     sensitive_resources: SensitiveResources
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return require_non_empty_string(value, "name")
+
+    @field_validator("scenario_type")
+    @classmethod
+    def require_valid_scenario_type(cls, value: str) -> str:
+        value = require_non_empty_string(value, "scenario_type")
+        if value not in VALID_SCENARIO_TYPES:
+            raise ValueError(
+                "Scenario field 'scenario_type' must be one of: "
+                f"{', '.join(sorted(VALID_SCENARIO_TYPES))}."
+            )
+        return value
 
     @property
     def is_attack(self) -> bool:
@@ -127,144 +189,24 @@ class Scenario:
     def allowed_labels(self) -> set[str]:
         labels: set[str] = set()
         for rule in self.tool_policy.allowed_calls:
-            if rule.tool != "set_issue_labels":
-                continue
-            labels.update(labels_allowed_by_rule(rule))
+            if rule.tool == "set_issue_labels":
+                labels.update(labels_allowed_by_rule(rule))
         return labels
 
     @property
     def allowed_repo_paths(self) -> set[str]:
         paths: set[str] = set()
         for rule in self.tool_policy.allowed_calls:
-            if rule.tool != "read_repo_file":
-                continue
-            paths.update(paths_allowed_by_rule(rule))
+            if rule.tool == "read_repo_file":
+                paths.update(paths_allowed_by_rule(rule))
         return paths
 
 
-def require_mapping(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
-    value = payload.get(field_name)
-    if not isinstance(value, dict):
-        raise ValueError(f"Scenario field '{field_name}' must be an object.")
-    return value
-
-
-def require_string(payload: dict[str, Any], field_name: str) -> str:
-    value = payload.get(field_name)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Scenario field '{field_name}' must be a non-empty string.")
-    return value
-
-
-def optional_string(payload: dict[str, Any], field_name: str) -> str | None:
-    value = payload.get(field_name)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(
-            f"Scenario field '{field_name}' must be null or a non-empty string."
-        )
-    return value
-
-
-def string_set(payload: dict[str, Any], field_name: str) -> set[str]:
-    values = payload.get(field_name, [])
-    if not isinstance(values, list) or any(
-        not isinstance(value, str) for value in values
-    ):
-        raise ValueError(f"Scenario field '{field_name}' must be a list of strings.")
-    return set(values)
-
-
-def require_choice(
-    payload: dict[str, Any], field_name: str, allowed_values: set[str]
-) -> str:
-    value = require_string(payload, field_name)
-    if value not in allowed_values:
-        raise ValueError(
-            f"Scenario field '{field_name}' must be one of: "
-            f"{', '.join(sorted(allowed_values))}."
-        )
-    return value
-
-
-def issue_from_payload(payload: dict[str, Any]) -> IssueSpec:
-    return IssueSpec(
-        title=require_string(payload, "title"),
-        body=require_string(payload, "body"),
-    )
-
-
-def attack_from_payload(payload: dict[str, Any]) -> AttackSpec:
-    is_attack = payload.get("is_attack")
-    if not isinstance(is_attack, bool):
-        raise ValueError("Scenario field 'attack.is_attack' must be a boolean.")
-    return AttackSpec(
-        is_attack=is_attack,
-        payload_source=require_choice(
-            payload, "payload_source", VALID_PAYLOAD_SOURCES
-        ),
-        payload_starts_in_issue=bool(payload.get("payload_starts_in_issue", False)),
-    )
-
-
-def context_from_payload(payload: dict[str, Any]) -> ContextSpec:
-    return ContextSpec(
-        trace_id=optional_string(payload, "trace_id"),
-        monitoring_query=optional_string(payload, "monitoring_query"),
-    )
-
-
-def tool_rule_from_payload(payload: dict[str, Any], field_name: str) -> ToolRule:
-    if not isinstance(payload, dict):
-        raise ValueError(f"Scenario field '{field_name}' entries must be objects.")
-    args = payload.get("args", {})
-    if not isinstance(args, dict):
-        raise ValueError(f"Scenario field '{field_name}.args' must be an object.")
-    return ToolRule(tool=require_string(payload, "tool"), args=dict(args))
-
-
-def tool_rules_from_payload(payload: dict[str, Any], field_name: str) -> tuple[ToolRule, ...]:
-    values = payload.get(field_name, [])
-    if not isinstance(values, list):
-        raise ValueError(f"Scenario field '{field_name}' must be a list.")
-    return tuple(
-        tool_rule_from_payload(value, field_name)
-        for value in values
-    )
-
-
-def tool_policy_from_payload(payload: dict[str, Any]) -> ToolPolicy:
-    allowed_calls = tool_rules_from_payload(payload, "allowed_calls")
-    if not allowed_calls:
-        raise ValueError("Scenario field 'tool_policy.allowed_calls' cannot be empty.")
-    return ToolPolicy(
-        allowed_calls=allowed_calls,
-        desired_calls=tool_rules_from_payload(payload, "desired_calls"),
-    )
-
-
-def sensitive_resources_from_payload(payload: dict[str, Any]) -> SensitiveResources:
-    return SensitiveResources(
-        repo_paths=string_set(payload, "repo_paths") or set(DEFAULT_SENSITIVE_PATHS),
-        markers=string_set(payload, "markers") or set(DEFAULT_SENSITIVE_TERMS),
-    )
-
-
 def scenario_from_payload(payload: dict[str, Any]) -> Scenario:
-    return Scenario(
-        name=require_string(payload, "name"),
-        scenario_type=require_choice(
-            payload, "scenario_type", VALID_SCENARIO_TYPES
-        ),
-        issue=issue_from_payload(require_mapping(payload, "issue")),
-        attack=attack_from_payload(require_mapping(payload, "attack")),
-        context=context_from_payload(require_mapping(payload, "context")),
-        tool_policy=tool_policy_from_payload(require_mapping(payload, "tool_policy")),
-        sensitive_resources=sensitive_resources_from_payload(
-            require_mapping(payload, "sensitive_resources")
-        ),
-    )
+    try:
+        return Scenario.model_validate(payload)
+    except ValidationError as error:
+        raise ValueError(str(error)) from error
 
 
 def load_scenarios(path: Path = DEFAULT_SCENARIO_FILE) -> dict[str, Scenario]:
@@ -283,9 +225,6 @@ def load_scenarios(path: Path = DEFAULT_SCENARIO_FILE) -> dict[str, Scenario]:
     if not scenarios:
         raise ValueError("Scenario file must contain at least one scenario.")
     return scenarios
-
-
-SCENARIOS = load_scenarios()
 
 
 def stringify(value: object) -> str:
@@ -369,10 +308,7 @@ def paths_allowed_by_rule(rule: ToolRule) -> set[str]:
     return set()
 
 
-def normal_comment_allowed(
-    text: object,
-    scenario: Scenario,
-) -> bool:
+def normal_comment_allowed(text: object, scenario: Scenario) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     return not (
