@@ -54,7 +54,7 @@ class GiteaEvaluationTests(unittest.TestCase):
         self.assertEqual(type_counts["benign"], 3)
 
     def test_custom_scenario_file_loads(self) -> None:
-        path = Path("dataset/gitea_scenarios.json")
+        path = Path("dataset/gitea_scenarios.yaml")
 
         self.assertEqual(load_scenarios(path)["single-turn"].name, "single-turn")
         self.assertEqual(

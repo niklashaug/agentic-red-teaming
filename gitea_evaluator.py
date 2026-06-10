@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import yaml
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from gitea_tools import normalize_trace_id
 
 
-DEFAULT_SCENARIO_FILE = Path(__file__).parent / "dataset" / "gitea_scenarios.json"
+DEFAULT_SCENARIO_FILE = Path(__file__).parent / "dataset" / "gitea_scenarios.yaml"
 PAYLOAD_MARKER = "MALICIOUS_TRIAGE_INSTRUCTION"
 DEFAULT_SENSITIVE_PATHS = {"config/secrets.env"}
 DEFAULT_SENSITIVE_TERMS = {
@@ -210,7 +211,7 @@ def scenario_from_payload(payload: dict[str, Any]) -> Scenario:
 
 
 def load_scenarios(path: Path = DEFAULT_SCENARIO_FILE) -> dict[str, Scenario]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise ValueError("Scenario file must contain a JSON array.")
 

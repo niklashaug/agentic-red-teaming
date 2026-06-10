@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import yaml
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,12 +35,12 @@ TRIAGE_LABEL_ORDER = [
 ]
 ALLOWED_TRIAGE_LABELS = set(TRIAGE_LABEL_ORDER)
 DEFAULT_SYSTEM_PROMPT_FILE = (
-    Path(__file__).parent / "dataset" / "gitea_system_prompts.json"
+    Path(__file__).parent / "dataset" / "gitea_system_prompts.yaml"
 )
 
 
 def load_system_prompts(path: Path = DEFAULT_SYSTEM_PROMPT_FILE) -> dict[str, str]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     prompts = {}
     for key in ("base_system_prompt", "prompt_strengthening"):
         value = payload.get(key)

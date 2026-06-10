@@ -6,9 +6,9 @@ COPY docker/logserver/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY docker/logserver/app.py .
-COPY dataset/gitea_telemetry.json dataset/gitea_telemetry.json
+COPY dataset/gitea_telemetry.yaml dataset/gitea_telemetry.yaml
 
-ENV LOGSERVER_TELEMETRY_FILE=/app/dataset/gitea_telemetry.json
+ENV LOGSERVER_TELEMETRY_FILE=/app/dataset/gitea_telemetry.yaml
 
 EXPOSE 8000
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import yaml
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -11,7 +12,7 @@ app = FastAPI(title="Mock trace log API", version="0.1.0")
 
 TelemetryMap = dict[str, dict[str, object]]
 DEFAULT_TELEMETRY_FILE = (
-    Path(__file__).resolve().parents[2] / "dataset" / "gitea_telemetry.json"
+    Path(__file__).resolve().parents[2] / "dataset" / "gitea_telemetry.yaml"
 )
 
 
@@ -23,7 +24,7 @@ def telemetry_file_path() -> Path:
 
 
 def load_telemetry() -> tuple[TelemetryMap, TelemetryMap]:
-    payload = json.loads(telemetry_file_path().read_text(encoding="utf-8"))
+    payload = yaml.safe_load(telemetry_file_path().read_text(encoding="utf-8"))
     return payload["logs"], payload["monitoring"]
 
 
