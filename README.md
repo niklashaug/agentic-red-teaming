@@ -54,7 +54,8 @@ uv run python gitea_experiment_runner.py --scenario all --runs 1 --defense none
 ## Active Files
 
 - `dataset/gitea_scenarios.json`: attack and benign-control scenarios
-- `docker/logserver/telemetry.json`: simulated log and monitoring artifacts
+- `dataset/gitea_telemetry.json`: simulated log and monitoring artifacts
+- `dataset/gitea_system_prompts.json`: agent system prompt variants
 - `gitea_agent.py`: issue-triage agent loop
 - `gitea_evaluator.py`: deterministic attack-success evaluator
 - `gitea_experiment_runner.py`: reset, issue creation, agent execution, CSV logging

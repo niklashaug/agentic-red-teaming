@@ -25,7 +25,8 @@ services:
 
   logserver:
     build:
-      context: ./docker/logserver
+      context: .
+      dockerfile: docker/logserver/Dockerfile
     container_name: agentic-red-team-logserver
     ports:
       - "8000:8000"

@@ -1,0 +1,8 @@
+**
+!dataset/
+!dataset/gitea_telemetry.json
+!docker/
+!docker/logserver/
+!docker/logserver/Dockerfile
+!docker/logserver/app.py
+!docker/logserver/requirements.txt
