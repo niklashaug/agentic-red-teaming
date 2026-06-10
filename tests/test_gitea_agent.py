@@ -2,9 +2,13 @@ import json
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 from gitea_agent import (
+    IssueToolbox,
     extract_tool_call,
+    extract_monitoring_query_from_issue,
+    extract_trace_id_from_issue,
     message_for_history,
     normalize_labels_argument,
     normalize_post_issue_comment_arguments,
@@ -44,12 +48,41 @@ class FakeGiteaClient:
 
 
 class GiteaAgentTests(unittest.TestCase):
-    def test_resolve_trace_id_uses_argument_when_numeric(self) -> None:
-        self.assertEqual(resolve_trace_id_argument({"trace_id": "100"}), "100")
+    def test_extract_trace_id_from_issue_body(self) -> None:
+        trace_id = "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
+        issue = {
+            "title": "Intermittent timeout",
+            "body": f"Please inspect runtime Trace ID: {trace_id} before labeling.",
+        }
 
-    def test_resolve_trace_id_rejects_placeholder(self) -> None:
-        with self.assertRaises(ValueError):
-            resolve_trace_id_argument({"trace_id": "<trace_id>"})
+        self.assertEqual(extract_trace_id_from_issue(issue), trace_id)
+
+    def test_resolve_trace_id_uses_argument_when_numeric(self) -> None:
+        issue = {"title": "No trace here", "body": "No trace here either."}
+
+        self.assertEqual(resolve_trace_id_argument({"trace_id": "100"}, issue), "100")
+
+    def test_resolve_trace_id_replaces_placeholder_from_issue(self) -> None:
+        issue = {
+            "title": "Worker timeout",
+            "body": "Please inspect trace_id=999 before choosing a label.",
+        }
+
+        self.assertEqual(
+            resolve_trace_id_argument({"trace_id": "<trace_id>"}, issue),
+            "999",
+        )
+
+    def test_resolve_trace_id_defaults_from_issue(self) -> None:
+        issue = {
+            "title": "Worker timeout",
+            "body": "Trace ID: 7f3e2c1a-9b44-4c2a-a820-ef917a91b123.",
+        }
+
+        self.assertEqual(
+            resolve_trace_id_argument({}, issue),
+            "7f3e2c1a-9b44-4c2a-a820-ef917a91b123",
+        )
 
     def test_resolve_issue_id_uses_numeric_argument(self) -> None:
         self.assertEqual(resolve_issue_id_argument({"issue_id": "7"}, 3), 7)
@@ -61,9 +94,49 @@ class GiteaAgentTests(unittest.TestCase):
     def test_resolve_issue_id_defaults_to_current_issue(self) -> None:
         self.assertEqual(resolve_issue_id_argument({}, 3), 3)
 
-    def test_resolve_monitoring_query_rejects_placeholder(self) -> None:
-        with self.assertRaises(ValueError):
-            resolve_monitoring_query_argument({"query": "<query>"})
+    def test_extract_monitoring_query_from_issue_body(self) -> None:
+        issue = {
+            "title": "Checkout alert",
+            "body": "Monitoring query: checkout-startup-crash.",
+        }
+
+        self.assertEqual(
+            extract_monitoring_query_from_issue(issue),
+            "checkout-startup-crash",
+        )
+
+    def test_resolve_monitoring_query_replaces_placeholder(self) -> None:
+        issue = {
+            "title": "Checkout alert",
+            "body": "Monitoring query: checkout-startup-crash.",
+        }
+
+        self.assertEqual(
+            resolve_monitoring_query_argument({"query": "<query>"}, issue),
+            "checkout-startup-crash",
+        )
+
+    def test_query_logs_defaults_to_trace_id_from_issue(self) -> None:
+        client = FakeGiteaClient()
+        client.issue = {
+            "number": 12,
+            "title": "Worker timeout",
+            "body": "Trace ID: 7f3e2c1a-9b44-4c2a-a820-ef917a91b123.",
+        }
+
+        with patch(
+            "gitea_agent.fetch_logs",
+            return_value={"trace_id": "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"},
+        ) as fetch_logs:
+            execution = IssueToolbox(client, 12, client.issue).query_logs()
+
+        self.assertEqual(
+            execution.arguments,
+            {"trace_id": "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"},
+        )
+        fetch_logs.assert_called_once_with(
+            "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
+        )
 
     def test_normalize_labels_argument_rejects_unknown_labels(self) -> None:
         with self.assertRaises(ValueError):

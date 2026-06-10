@@ -188,18 +188,63 @@ def build_issue_prompt(issue: dict[str, Any]) -> str:
     )
 
 
-def resolve_trace_id_argument(arguments: dict[str, Any]) -> str:
+def extract_trace_id_from_issue(issue: dict[str, Any]) -> str | None:
+    for field_name in ("title", "body"):
+        value = issue.get(field_name)
+        if not isinstance(value, str):
+            continue
+        try:
+            return normalize_trace_id(value)
+        except ValueError:
+            continue
+    return None
+
+
+def resolve_trace_id_argument(
+    arguments: dict[str, Any], issue: dict[str, Any]
+) -> str:
     trace_id = arguments.get("trace_id")
-    if trace_id is None:
-        raise ValueError("query_logs expects a trace_id argument.")
-    return normalize_trace_id(trace_id)
+    if trace_id is not None:
+        try:
+            return normalize_trace_id(trace_id)
+        except ValueError:
+            fallback_trace_id = extract_trace_id_from_issue(issue)
+            if fallback_trace_id is not None:
+                return fallback_trace_id
+            raise
+
+    fallback_trace_id = extract_trace_id_from_issue(issue)
+    if fallback_trace_id is not None:
+        return fallback_trace_id
+    raise ValueError("query_logs expects a trace_id argument.")
 
 
-def resolve_monitoring_query_argument(arguments: dict[str, Any]) -> str:
+def extract_monitoring_query_from_issue(issue: dict[str, Any]) -> str | None:
+    for field_name in ("title", "body"):
+        value = issue.get(field_name)
+        if not isinstance(value, str):
+            continue
+        match = re.search(
+            r"\bmonitoring(?: query)?\s*[:=]\s*([A-Za-z0-9_.:/-]+)",
+            value,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip(".,;)")
+    return None
+
+
+def resolve_monitoring_query_argument(
+    arguments: dict[str, Any], issue: dict[str, Any]
+) -> str:
     query = arguments.get("query")
-    if not isinstance(query, str) or not query.strip() or "<" in query:
-        raise ValueError("query_monitoring expects a query argument.")
-    return query.strip()
+    if isinstance(query, str) and query.strip() and "<" not in query:
+        return query.strip()
+
+    fallback_query = extract_monitoring_query_from_issue(issue)
+    if fallback_query is not None:
+        return fallback_query
+    raise ValueError("query_monitoring expects a query argument.")
 
 
 def resolve_issue_id_argument(arguments: dict[str, Any], current_issue_id: int) -> int:
@@ -335,7 +380,9 @@ class IssueToolbox:
         Returns:
             Diagnostic log details for the trace id.
         """
-        resolved_trace_id = resolve_trace_id_argument({"trace_id": trace_id})
+        resolved_trace_id = resolve_trace_id_argument(
+            {"trace_id": trace_id}, self.issue
+        )
         arguments = {"trace_id": resolved_trace_id}
         authorize_tool_call("query_logs", arguments, self.current_issue_id, self.issue)
         return ToolExecution(arguments, fetch_logs(resolved_trace_id))
@@ -349,7 +396,7 @@ class IssueToolbox:
         Returns:
             Monitoring data for the query.
         """
-        resolved_query = resolve_monitoring_query_argument({"query": query})
+        resolved_query = resolve_monitoring_query_argument({"query": query}, self.issue)
         arguments = {"query": resolved_query}
         authorize_tool_call(
             "query_monitoring", arguments, self.current_issue_id, self.issue
