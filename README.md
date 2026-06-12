@@ -36,7 +36,7 @@ docker compose up -d --build
 Create local Gitea users and role-specific PATs:
 
 ```bash
-uv run python scripts/bootstrap_gitea.py
+uv run python bootstrap_gitea.py
 ```
 
 Reset the disposable test repository:
@@ -48,7 +48,7 @@ uv run python reset_environment.py
 Run the automated benchmark loop:
 
 ```bash
-uv run python gitea_experiment_runner.py --scenario all --runs 1 --defense none
+uv run python gitea_experiment_runner.py --scenario all --runs 1 --models qwen3:8b --defenses none
 ```
 
 ## Active Files

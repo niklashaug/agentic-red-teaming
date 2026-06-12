@@ -7,7 +7,7 @@ import re
 import sys
 import yaml
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -62,12 +62,39 @@ class AgentResult:
     tool_calls: list[dict[str, Any]]
     raw_outputs: list[dict[str, Any]]
     comments: list[dict[str, Any]]
+    thinking: str = ""
 
 
 @dataclass(frozen=True)
 class ToolExecution:
     arguments: dict[str, Any]
     result: Any
+
+
+class RuntimeGuard:
+    """Configurable runtime safety constraints."""
+    
+    def __init__(self, profile: Literal["disabled", "sandbox"] = "sandbox"):
+        self.profile = profile
+
+    def authorize(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        current_issue_id: int,
+    ) -> None:
+        if self.profile == "disabled":
+            return
+
+        # Sandbox guards
+        if name in {"read_issue", "set_issue_labels", "post_issue_comment"}:
+            if resolve_issue_id_argument(arguments, current_issue_id) != current_issue_id:
+                raise PermissionError(f"{name} cannot target a different issue in sandbox mode.")
+        
+        if name == "read_repo_file":
+            path = resolve_repo_path_argument(arguments)
+            if path.endswith(".env") or "secrets" in path.lower():
+                raise PermissionError(f"Access to sensitive file '{path}' is blocked in sandbox mode.")
 
 
 def get_field(value: Any, field_name: str, default: Any = None) -> Any:
@@ -271,23 +298,12 @@ def normalize_post_issue_comment_arguments(
     return normalized_arguments
 
 
-def authorize_tool_call(
-    name: str,
-    arguments: dict[str, Any],
-    issue_id: int,
-    issue: dict[str, Any],
-) -> None:
-    del issue
-    if name in {"read_issue", "set_issue_labels", "post_issue_comment"}:
-        if resolve_issue_id_argument(arguments, issue_id) != issue_id:
-            raise PermissionError(f"{name} cannot target a different issue.")
-
-
 @dataclass
 class IssueToolbox:
     client: GiteaClient
     current_issue_id: int
     issue: dict[str, Any]
+    guard: RuntimeGuard = field(default_factory=lambda: RuntimeGuard("sandbox"))
 
     def functions(self) -> dict[str, Callable[..., ToolExecution]]:
         tools = (
@@ -318,7 +334,7 @@ class IssueToolbox:
             raw_arguments, self.current_issue_id
         )
         arguments = {"issue_id": target_issue_id}
-        authorize_tool_call("read_issue", arguments, self.current_issue_id, self.issue)
+        self.guard.authorize("read_issue", arguments, self.current_issue_id)
         return ToolExecution(arguments, self.client.get_issue(target_issue_id))
 
     def search_similar_issues(self, query: str) -> ToolExecution:
@@ -348,7 +364,7 @@ class IssueToolbox:
             {"trace_id": trace_id}, self.issue
         )
         arguments = {"trace_id": resolved_trace_id}
-        authorize_tool_call("query_logs", arguments, self.current_issue_id, self.issue)
+        self.guard.authorize("query_logs", arguments, self.current_issue_id)
         return ToolExecution(arguments, fetch_logs(resolved_trace_id))
 
     def query_monitoring(self, query: str | None = None) -> ToolExecution:
@@ -362,9 +378,7 @@ class IssueToolbox:
         """
         resolved_query = resolve_monitoring_query_argument({"query": query}, self.issue)
         arguments = {"query": resolved_query}
-        authorize_tool_call(
-            "query_monitoring", arguments, self.current_issue_id, self.issue
-        )
+        self.guard.authorize("query_monitoring", arguments, self.current_issue_id)
         return ToolExecution(arguments, fetch_monitoring(resolved_query))
 
     def read_repo_file(self, path: str) -> ToolExecution:
@@ -377,9 +391,7 @@ class IssueToolbox:
             The repository file contents.
         """
         arguments = {"path": resolve_repo_path_argument({"path": path})}
-        authorize_tool_call(
-            "read_repo_file", arguments, self.current_issue_id, self.issue
-        )
+        self.guard.authorize("read_repo_file", arguments, self.current_issue_id)
         return ToolExecution(arguments, self.client.read_file(arguments["path"]))
 
     def set_issue_labels(
@@ -404,9 +416,7 @@ class IssueToolbox:
         )
         normalized_labels = normalize_labels_argument(raw_arguments)
         arguments = {"issue_id": target_issue_id, "labels": normalized_labels}
-        authorize_tool_call(
-            "set_issue_labels", arguments, self.current_issue_id, self.issue
-        )
+        self.guard.authorize("set_issue_labels", arguments, self.current_issue_id)
         return ToolExecution(
             arguments,
             self.client.manage_issue_labels(target_issue_id, normalized_labels),
@@ -436,9 +446,7 @@ class IssueToolbox:
             "issue_id": target_issue_id,
             "text": normalized_arguments["text"],
         }
-        authorize_tool_call(
-            "post_issue_comment", arguments, self.current_issue_id, self.issue
-        )
+        self.guard.authorize("post_issue_comment", arguments, self.current_issue_id)
         return ToolExecution(
             arguments,
             self.client.post_issue_comment(target_issue_id, arguments["text"]),
@@ -459,6 +467,7 @@ def run_issue_agent(
     client: GiteaClient | None = None,
     model: str = DEFAULT_MODEL,
     defense: Literal["none", "prompt"] = "none",
+    guard_profile: Literal["disabled", "sandbox"] = "sandbox",
     max_steps: int = 6,
     verbose: bool = False,
 ) -> AgentResult:
@@ -475,11 +484,13 @@ def run_issue_agent(
         {"role": "system", "content": build_system_prompt(defense)},
         {"role": "user", "content": build_issue_prompt(issue)},
     ]
-    available_functions = IssueToolbox(active_client, issue_id, issue).functions()
+    guard = RuntimeGuard(guard_profile)
+    available_functions = IssueToolbox(active_client, issue_id, issue, guard).functions()
     tools = list(available_functions.values())
 
     tool_calls: list[dict[str, Any]] = []
     raw_outputs: list[dict[str, Any]] = []
+    accumulated_thinking: list[str] = []
     final_action = "max_steps_exceeded"
     stop_after_comment = False
 
@@ -500,6 +511,11 @@ def run_issue_agent(
             options={"temperature": 0},
         )
         message = response_message(response)
+        
+        # Capture thinking if present
+        thinking = get_field(message, "thinking", "")
+        if thinking:
+            accumulated_thinking.append(thinking)
 
         if verbose:
             _log_verbose(f"RESPONSE (step {step})", to_plain_data(message))
@@ -566,6 +582,7 @@ def run_issue_agent(
         tool_calls=tool_calls,
         raw_outputs=raw_outputs,
         comments=comments,
+        thinking="\n\n".join(accumulated_thinking),
     )
 
 

@@ -21,6 +21,7 @@ def run_one(
     scenario: Scenario,
     model: str,
     defense: Literal["none", "prompt"],
+    guard_profile: Literal["disabled", "sandbox"] = "sandbox",
     max_steps: int,
     bot_client: GiteaClient | None = None,
     reporter_client: GiteaClient | None = None,
@@ -29,6 +30,7 @@ def run_one(
         bot_client = gitea_client("bot")
     if reporter_client is None:
         reporter_client = gitea_client("reporter")
+    
     issue = reporter_client.create_issue(scenario.issue.title, scenario.issue.body)
 
     agent_result = run_issue_agent(
@@ -36,6 +38,7 @@ def run_one(
         client=bot_client,
         model=model,
         defense=defense,
+        guard_profile=guard_profile,
         max_steps=max_steps,
     )
     final_issue = bot_client.get_issue(int(issue["number"]))
@@ -57,6 +60,7 @@ def run_one(
         "payload_source": scenario.payload_source,
         "model": model,
         "defense": defense,
+        "runtime_guard": guard_profile,
         "issue_id": issue["number"],
         "issue_author": issue.get("user", {}).get("login", DEFAULT_REPORTER_USER),
         "agent_user": DEFAULT_BOT_USER,
@@ -66,6 +70,7 @@ def run_one(
             agent_result.tool_calls, ensure_ascii=True, default=str
         ),
         "raw_outputs_json": json.dumps(agent_result.raw_outputs, ensure_ascii=True),
+        "agent_thinking": agent_result.thinking,
         **evaluation,
     }
 
@@ -79,6 +84,7 @@ CSV_FIELDNAMES = [
     "payload_source",
     "model",
     "defense",
+    "runtime_guard",
     "issue_id",
     "issue_author",
     "agent_user",
@@ -86,6 +92,7 @@ CSV_FIELDNAMES = [
     "monitoring_query",
     "tool_calls_json",
     "raw_outputs_json",
+    "agent_thinking",
     "payload_seen",
     "unauthorized_tool_call",
     "unauthorized_tool_name",
@@ -182,8 +189,26 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SCENARIO_FILE,
         help=f"JSON scenario file. Defaults to {DEFAULT_SCENARIO_FILE}.",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=MODEL_HELP)
-    parser.add_argument("--defense", choices=["none", "prompt"], default="none")
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=[DEFAULT_MODEL],
+        help="One or more Ollama models to test.",
+    )
+    parser.add_argument(
+        "--defenses",
+        nargs="+",
+        choices=["none", "prompt"],
+        default=["none"],
+        help="One or more defense modes to test.",
+    )
+    parser.add_argument(
+        "--runtime-guards",
+        nargs="+",
+        choices=["disabled", "sandbox"],
+        default=["sandbox"],
+        help="One or more runtime guard profiles to test.",
+    )
     parser.add_argument("--noise-issues", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument(
@@ -204,41 +229,50 @@ def main() -> None:
     admin_client = gitea_client("admin")
     bot_client = gitea_client("bot")
     reporter_client = gitea_client("reporter")
-    reset_environment(
-        client=admin_client,
-        issue_client=reporter_client,
-        noise_issues=args.noise_issues,
-    )
 
-    rows: list[dict[str, object]] = []
-    for scenario_name in scenario_names_from_arg(args.scenario, scenarios):
-        scenario = scenarios[scenario_name]
-        for _ in range(args.runs):
-            row = run_one(
-                scenario=scenario,
-                model=args.model,
-                defense=args.defense,
-                max_steps=args.max_steps,
-                bot_client=bot_client,
-                reporter_client=reporter_client,
-            )
-            rows.append(row)
-            write_rows(args.results_csv, [row])
-            print(
-                f"{scenario.name}: unauthorized={row['unauthorized_tool_call']} "
-                f"level={row['max_success_level']} issue={row['issue_id']}"
-            )
+    total_rows: list[dict[str, object]] = []
+    
+    # Run the matrix: models x defenses x guards x scenarios
+    for model in args.models:
+        for defense in args.defenses:
+            for guard in args.runtime_guards:
+                # Reset environment once per config to keep noise issues consistent
+                reset_environment(
+                    client=admin_client,
+                    issue_client=reporter_client,
+                    noise_issues=args.noise_issues,
+                )
+                
+                scenario_names = scenario_names_from_arg(args.scenario, scenarios)
+                print(f"\n>>> Starting Matrix: Model={model}, Defense={defense}, Guard={guard}, Scenarios={len(scenario_names)}")
+                
+                for scenario_name in scenario_names:
+                    scenario = scenarios[scenario_name]
+                    for _ in range(args.runs):
+                        row = run_one(
+                            scenario=scenario,
+                            model=model,
+                            defense=defense,
+                            guard_profile=guard,
+                            max_steps=args.max_steps,
+                            bot_client=bot_client,
+                            reporter_client=reporter_client,
+                        )
+                        total_rows.append(row)
+                        write_rows(args.results_csv, [row])
+                        print(
+                            f"  {scenario.name}: unauthorized={row['unauthorized_tool_call']} "
+                            f"level={row['max_success_level']} issue={row['issue_id']}"
+                        )
 
-    summary = summarize_rows(rows)
-    print(
-        f"Wrote {summary['total_runs']} rows to {args.results_csv}; "
-        f"attack_runs={summary['attack_runs']}; "
-        f"benign_runs={summary['benign_runs']}; "
-        f"T-ASR={format_rate(summary['tasr'])}; "
-        f"sensitive_access_rate={format_rate(summary['sensitive_access_rate'])}; "
-        f"exfiltration_rate={format_rate(summary['exfiltration_rate'])}; "
-        f"benign_control_rate={format_rate(summary['benign_control_rate'])}"
-    )
+    if total_rows:
+        summary = summarize_rows(total_rows)
+        print(f"\n{'='*60}")
+        print(f"MATRIX COMPLETED: {len(total_rows)} runs")
+        print(f"Results appended to {args.results_csv}")
+        print(f"Overall T-ASR: {format_rate(summary['tasr'])}")
+        print(f"Overall Benign Pass: {format_rate(summary['benign_control_rate'])}")
+        print(f"{'='*60}")
 
 
 if __name__ == "__main__":
