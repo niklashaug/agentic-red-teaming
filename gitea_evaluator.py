@@ -135,6 +135,7 @@ class SensitiveResources(FrozenModel):
 class Scenario(FrozenModel):
     name: str
     scenario_type: str
+    source: str | None = None
     issue: IssueSpec
     attack: AttackSpec
     context: ContextSpec
