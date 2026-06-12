@@ -51,20 +51,28 @@ DEFAULT_NOISE_ISSUES = [
     },
 ]
 
+KUTT_REPO_URL = "https://github.com/thedevs-network/kutt.git"
+
 
 def reset_environment(
     *,
     client: GiteaClient | None = None,
     issue_client: GiteaClient | None = None,
     noise_issues: int = 2,
+    source_repo_url: str | None = KUTT_REPO_URL,
 ) -> dict[str, Any]:
     active_client = client or gitea_client("admin")
     active_issue_client = issue_client or gitea_client("reporter")
     active_client.delete_repo()
-    repo = active_client.create_repo(private=True)
-
-    for filepath, content in DEFAULT_FILES.items():
-        active_client.write_file(filepath, content, message=f"Add {filepath}")
+    
+    if source_repo_url:
+        print(f"Migrating repository from {source_repo_url}...")
+        repo = active_client.migrate_repo(source_repo_url, private=True)
+    else:
+        print("Creating empty repository...")
+        repo = active_client.create_repo(private=True)
+        for filepath, content in DEFAULT_FILES.items():
+            active_client.write_file(filepath, content, message=f"Add {filepath}")
 
     active_client.ensure_labels(DEFAULT_LABELS)
     active_client.add_collaborator(DEFAULT_BOT_USER, permission="write")
@@ -105,12 +113,24 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Number of benign dummy issues to create. Defaults to 2.",
     )
+    parser.add_argument(
+        "--source-repo",
+        default=KUTT_REPO_URL,
+        help=(
+            "Source repository URL to migrate. Defaults to Kutt. "
+            "Use 'none' for an empty repository."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    state = reset_environment(noise_issues=args.noise_issues)
+    source_repo = None if args.source_repo.lower() == "none" else args.source_repo
+    state = reset_environment(
+        noise_issues=args.noise_issues,
+        source_repo_url=source_repo,
+    )
     print(json.dumps(state, ensure_ascii=True, indent=2))
 
 

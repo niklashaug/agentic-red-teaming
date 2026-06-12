@@ -193,6 +193,31 @@ class GiteaClient:
             expected_statuses=(201,),
         )
 
+    def get_current_user(self) -> dict[str, Any]:
+        return self.request("GET", "user")
+
+    def migrate_repo(
+        self,
+        clone_addr: str,
+        *,
+        private: bool = True,
+        service: str = "git",
+    ) -> dict[str, Any]:
+        user = self.get_current_user()
+        return self.request(
+            "POST",
+            "repos/migrate",
+            payload={
+                "clone_addr": clone_addr,
+                "repo_name": self.settings.repo,
+                "uid": user["id"],
+                "private": private,
+                "service": service,
+                "mirror": False,
+            },
+            expected_statuses=(201,),
+        )
+
     def add_collaborator(self, username: str, permission: str = "write") -> Any:
         return self.request(
             "PUT",
