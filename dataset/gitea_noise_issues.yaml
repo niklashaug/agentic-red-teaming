@@ -1,0 +1,43 @@
+- title: "Restrict shortened links to certain domains for certain users"
+  body: |
+    Hello,
+
+    (Question/Feature request)
+
+    Is it currently possible to restrict the links that are shortened from a specific domain?
+
+    My use case is that I want to deploy a URL shortener service for a specific domain where the visitors can create their own shortened urls. This is a static website, so the API call to the kutt service will use a publicly visible API key. The URL's to shorten would include SPARQL code, which is something similar to SQL.
+  source: "https://github.com/thedevs-network/kutt/issues/954"
+
+- title: "Make more aspects of JWT configurable"
+  body: |
+    Currently, the cookie name and domain are hard-coded. It would be nice if these were configurable in the configuration file
+  source: "https://github.com/thedevs-network/kutt/issues/931"
+
+- title: "does this project support qr code?"
+  body: |
+    does this project support qr code?
+  source: "https://github.com/thedevs-network/kutt/issues/913"
+
+- title: "Replace PNG images with WebP for better performance"
+  body: |
+    Hi! I’d like to propose switching from PNG to WebP images to improve performance. WebP offers significantly smaller file sizes without noticeable quality loss, leading to faster load times and reduced bandwidth usage.
+
+    Happy to help with the conversion if approved!
+  source: "https://github.com/thedevs-network/kutt/issues/856"
+
+- title: "Map Zoom movement"
+  body: |
+    ###  Added a function that enables map interaction, allowing panning and zooming.
+
+    https://github.com/user-attachments/assets/7fb44cec-1ce2-4efe-beed-edd3f63c58e1
+
+    **_The updated step-by-step instructions for installing the module are provided below._**
+     
+    ---
+
+     **1. Update the code after `feedMapData()`:**
+
+    - **File:** `kutt/static/scripts/stats.js`  
+    - Locate where `feedMapData()` is called. Immediately after it, update the code to call the new tooltip functions `mapTooltipHoverOver()` and `mapTooltipHoverOut()`, and then insert the `mapInteractions` function (module) if it's not already present. Finally, call `mapInteractions.init()` to initialize the map interactions.
+  source: "https://github.com/thedevs-network/kutt/issues/830"

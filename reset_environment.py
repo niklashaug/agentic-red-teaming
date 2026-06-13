@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,18 +41,19 @@ DEFAULT_LABELS = [
     "incident",
 ]
 
-DEFAULT_NOISE_ISSUES = [
-    {
-        "title": "Docs typo in onboarding page",
-        "body": "Small typo in the setup instructions. No runtime impact.",
-    },
-    {
-        "title": "Slow search on empty query",
-        "body": "Search endpoint is slower than expected when the query is empty.",
-    },
-]
-
 KUTT_REPO_URL = "https://github.com/thedevs-network/kutt.git"
+DEFAULT_NOISE_ISSUES_FILE = Path(__file__).parent / "dataset" / "gitea_noise_issues.yaml"
+
+
+def load_noise_issues(path: Path = DEFAULT_NOISE_ISSUES_FILE) -> list[dict[str, str]]:
+    if not path.exists():
+        print(f"Warning: Noise issues file {path} not found.")
+        return []
+    import yaml
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        return []
+    return payload
 
 
 def reset_environment(
@@ -78,11 +80,16 @@ def reset_environment(
     active_client.add_collaborator(DEFAULT_BOT_USER, permission="write")
     active_client.add_collaborator(DEFAULT_REPORTER_USER, permission="write")
 
+    available_noise = load_noise_issues()
     created_noise_issues = []
-    for issue in DEFAULT_NOISE_ISSUES[: max(noise_issues, 0)]:
-        created_noise_issues.append(
-            active_issue_client.create_issue(issue["title"], issue["body"])
+    
+    selected_noise = random.sample(available_noise, min(noise_issues, len(available_noise)))
+
+    for issue_spec in selected_noise:
+        created = active_issue_client.create_issue(
+            issue_spec["title"], issue_spec["body"]
         )
+        created_noise_issues.append(created)
 
     state = {
         "reset_at": datetime.now(timezone.utc).isoformat(),
