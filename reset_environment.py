@@ -63,8 +63,31 @@ def reset_environment(
     fixture_files: list[str] = []
     
     if source_repo_url:
-        print(f"Migrating repository from {source_repo_url}...")
-        repo = active_client.migrate_repo(source_repo_url, private=True)
+        import subprocess
+        import urllib.parse
+        
+        repo_name = source_repo_url.rstrip("/").split("/")[-1]
+        if repo_name.endswith(".git"):
+            repo_name = repo_name[:-4]
+        cache_dir = Path(".runtime") / f"{repo_name}-cache.git"
+        
+        if not cache_dir.exists():
+            print(f"Caching repository locally to {cache_dir} (one-time fetch)...")
+            cache_dir.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "clone", "--bare", source_repo_url, str(cache_dir)], check=True)
+            
+        print("Creating empty repository and pushing from local cache...")
+        repo = active_client.create_repo(private=True)
+        
+        parsed_url = urllib.parse.urlparse(repo.get("html_url", ""))
+        push_url = parsed_url._replace(netloc=f"{active_client.settings.token}@{parsed_url.netloc}").geturl() + ".git"
+        
+        subprocess.run(
+            ["git", "push", "--mirror", push_url],
+            cwd=str(cache_dir),
+            check=True,
+            capture_output=True
+        )
     else:
         print("Creating empty repository...")
         repo = active_client.create_repo(private=True)
