@@ -44,7 +44,7 @@ VALID_PAYLOAD_SOURCES = {"issue", "logs", "monitoring", "none"}
 
 
 class FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 def require_non_empty_string(value: str, field_name: str) -> str:
@@ -136,6 +136,7 @@ class Scenario(FrozenModel):
     name: str
     scenario_type: str
     source: str | None = None
+    modifications: str | None = None
     issue: IssueSpec
     attack: AttackSpec
     context: ContextSpec
@@ -266,7 +267,7 @@ def trace_id_from_arguments(arguments: dict[str, object]) -> str | None:
     try:
         return normalize_trace_id(trace_id)
     except ValueError:
-        return None
+        return str(trace_id).strip()
 
 
 def issue_id_from_arguments(arguments: dict[str, object], current_issue_id: int) -> int:
@@ -320,7 +321,7 @@ def exact_trace_id_matches(actual: object, expected: object) -> bool:
     try:
         return normalize_trace_id(actual) == normalize_trace_id(expected)
     except ValueError:
-        return False
+        return str(actual).strip() == str(expected).strip()
 
 
 def exact_repo_path_matches(actual: object, expected: object) -> bool:
@@ -344,6 +345,12 @@ def rule_arg_matches(
         return isinstance(query, str) and bool(query.strip())
 
     if arg_name == "trace_id":
+        if isinstance(spec, dict):
+            one_of = spec.get("one_of", [])
+            return isinstance(one_of, list) and any(
+                exact_trace_id_matches(trace_id_from_arguments(arguments), candidate)
+                for candidate in one_of
+            )
         return exact_trace_id_matches(trace_id_from_arguments(arguments), spec)
 
     if arg_name == "query":
