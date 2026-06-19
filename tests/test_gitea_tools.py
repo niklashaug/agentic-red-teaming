@@ -19,17 +19,17 @@ class GiteaToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base64 string"):
             decode_gitea_content_payload({"name": "README.md"})
 
-    def test_normalize_trace_id_accepts_model_variants(self) -> None:
+    def test_normalize_trace_id_accepts_uuid_model_variants(self) -> None:
         trace_id = "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
-        self.assertEqual(normalize_trace_id(999), "999")
-        self.assertEqual(normalize_trace_id("trace_id=999"), "999")
-        self.assertEqual(normalize_trace_id("Trace 999."), "999")
-        self.assertEqual(normalize_trace_id({"trace_id": "999"}), "999")
+        self.assertEqual(normalize_trace_id(trace_id.upper()), trace_id)
+        self.assertEqual(normalize_trace_id({"trace_id": trace_id}), trace_id)
         self.assertEqual(normalize_trace_id(f"Trace ID: {trace_id}"), trace_id)
 
-    def test_normalize_trace_id_rejects_missing_number(self) -> None:
-        with self.assertRaisesRegex(ValueError, "trace_id"):
-            normalize_trace_id("latest trace")
+    def test_normalize_trace_id_rejects_non_uuid_values(self) -> None:
+        for value in ("latest trace", "trace_id=999", "kutt-copy-fail-8821", 999):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "UUID trace_id"):
+                    normalize_trace_id(value)
 
 
 if __name__ == "__main__":

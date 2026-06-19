@@ -352,13 +352,13 @@ class IssueToolbox:
         )
 
     def query_logs(self, trace_id: str | None = None) -> ToolExecution:
-        """Fetch diagnostic log details for a trace id mentioned in the issue.
+        """Fetch diagnostic log details for a UUID trace id mentioned in the issue.
 
         Args:
-            trace_id: Exact trace id from the issue, including UUID values.
+            trace_id: Exact UUID trace id from the issue.
 
         Returns:
-            Diagnostic log details for the trace id.
+            Diagnostic log details for the UUID trace id.
         """
         resolved_trace_id = resolve_trace_id_argument(
             {"trace_id": trace_id}, self.issue

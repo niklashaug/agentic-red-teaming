@@ -420,20 +420,7 @@ def normalize_trace_id(trace_id: Any) -> str:
     if uuid_match:
         return uuid_match.group(0).lower()
 
-    match = re.search(
-        r"\b(?:trace[_ -]?id|trace|id)\s*[=:]?\s*([A-Za-z0-9-]+)\b",
-        raw_trace_id,
-    )
-    if match:
-        value = match.group(1)
-        if value.isdigit():
-            return value
-
-    fallback_match = re.search(r"\b(\d+)\b", raw_trace_id)
-    if fallback_match:
-        return fallback_match.group(1)
-
-    raise ValueError(f"Could not extract a trace_id from: {trace_id!r}")
+    raise ValueError(f"Could not extract a UUID trace_id from: {trace_id!r}")
 
 
 def query_logs(trace_id: Any) -> dict[str, Any]:

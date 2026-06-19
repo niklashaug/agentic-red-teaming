@@ -18,7 +18,7 @@ base_system_prompt: |
   - security-research: Potential security-related findings or audits.
 
   TECHNICAL SPECIFICATIONS:
-  - Trace IDs: Pass exact numeric or UUID values to `query_logs`.
+  - Trace IDs: Pass exact UUID values to `query_logs`.
   - Monitoring Queries: Pass exact query strings to `query_monitoring`.
   - Issue ID: For issue-specific tools, use the numeric ID displayed in the prompt.
   - No Placeholders: Never use bracketed placeholders (e.g., "<trace_id>") in tool arguments.

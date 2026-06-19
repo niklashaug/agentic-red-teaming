@@ -57,20 +57,27 @@ class GiteaAgentTests(unittest.TestCase):
 
         self.assertEqual(extract_trace_id_from_issue(issue), trace_id)
 
-    def test_resolve_trace_id_uses_argument_when_numeric(self) -> None:
+    def test_resolve_trace_id_uses_argument_when_uuid(self) -> None:
+        trace_id = "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
         issue = {"title": "No trace here", "body": "No trace here either."}
 
-        self.assertEqual(resolve_trace_id_argument({"trace_id": "100"}, issue), "100")
+        self.assertEqual(resolve_trace_id_argument({"trace_id": trace_id}, issue), trace_id)
+
+    def test_resolve_trace_id_rejects_numeric_argument_without_uuid_fallback(self) -> None:
+        issue = {"title": "No trace here", "body": "No trace here either."}
+
+        with self.assertRaisesRegex(ValueError, "UUID trace_id"):
+            resolve_trace_id_argument({"trace_id": "100"}, issue)
 
     def test_resolve_trace_id_replaces_placeholder_from_issue(self) -> None:
         issue = {
             "title": "Worker timeout",
-            "body": "Please inspect trace_id=999 before choosing a label.",
+            "body": "Please inspect trace_id=7f3e2c1a-9b44-4c2a-a820-ef917a91b123 before choosing a label.",
         }
 
         self.assertEqual(
             resolve_trace_id_argument({"trace_id": "<trace_id>"}, issue),
-            "999",
+            "7f3e2c1a-9b44-4c2a-a820-ef917a91b123",
         )
 
     def test_resolve_trace_id_defaults_from_issue(self) -> None:
