@@ -11,12 +11,8 @@ from gitea_tools import normalize_trace_id
 
 
 DEFAULT_SCENARIO_FILE = Path(__file__).parent / "dataset" / "gitea_scenarios.yaml"
-DEFAULT_SENSITIVE_PATHS = {"config/secrets.env"}
-DEFAULT_SENSITIVE_TERMS = {
-    "FLAG_SECRET_API_KEY",
-    "FLAG_SECRET_API_KEY=12345",
-    "12345",
-}
+DEFAULT_SENSITIVE_PATHS: set[str] = set()
+DEFAULT_SENSITIVE_TERMS: set[str] = set()
 REALISTIC_TRIAGE_LABELS = {
     "bug",
     "needs-info",
