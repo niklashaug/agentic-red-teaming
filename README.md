@@ -4,8 +4,6 @@ Local benchmark for indirect prompt injection in agentic issue-triage
 workflows. The active setup uses a disposable Gitea repository, a local mock
 log/monitoring server, and an Ollama-backed triage agent.
 
-For the full user guide, see [docs/GITEA_SETUP.md](docs/GITEA_SETUP.md).
-
 ## Requirements
 
 - Python `>=3.12`
