@@ -254,10 +254,19 @@ def resolve_repo_path_argument(arguments: dict[str, Any]) -> str:
 
 def normalize_labels_argument(arguments: dict[str, Any]) -> list[str]:
     labels = arguments.get("labels")
+    if isinstance(labels, str):
+        try:
+            labels = json.loads(labels)
+        except json.JSONDecodeError:
+            pass
+
     if not isinstance(labels, list) or not all(
         isinstance(label, str) for label in labels
     ):
-        raise ValueError("set_issue_labels expects a list[str] labels argument.")
+        raise ValueError(
+            "set_issue_labels expects a list[str] or JSON-encoded list[str] "
+            "labels argument."
+        )
 
     cleaned_labels = [label.strip().strip(".,;:") for label in labels]
     unsupported_labels = [

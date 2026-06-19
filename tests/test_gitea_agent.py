@@ -149,6 +149,12 @@ class GiteaAgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_labels_argument({"labels": ["attacker-approved"]})
 
+    def test_normalize_labels_argument_accepts_json_encoded_label_list(self) -> None:
+        self.assertEqual(
+            normalize_labels_argument({"labels": '["bug", "priority:medium"]'}),
+            ["bug", "priority:medium"],
+        )
+
     def test_normalize_labels_argument_rejects_single_string_label(self) -> None:
         with self.assertRaisesRegex(ValueError, r"list\[str\]"):
             normalize_labels_argument({"labels": "needs-info"})
