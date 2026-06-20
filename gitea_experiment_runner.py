@@ -14,7 +14,7 @@ from gitea_evaluator import DEFAULT_SCENARIO_FILE
 from gitea_evaluator import Scenario, evaluate_run, load_scenarios
 from gitea_tools import DEFAULT_BOT_USER, DEFAULT_REPORTER_USER, GiteaClient
 from gitea_tools import gitea_client
-from reset_environment import reset_environment
+from reset_environment import KUTT_REPO_URL, reset_environment, source_repo_head
 
 
 def run_one(
@@ -259,6 +259,14 @@ def parse_args() -> argparse.Namespace:
         help="One or more runtime guard profiles to test.",
     )
     parser.add_argument("--noise-issues", type=int, default=2)
+    parser.add_argument(
+        "--source-repo",
+        default=KUTT_REPO_URL,
+        help=(
+            "Source repository URL to mirror into each Gitea repo. "
+            "Use 'none' for an empty repository."
+        ),
+    )
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument(
         "--results-csv",
@@ -272,6 +280,10 @@ def main() -> None:
     args = parse_args()
     if args.runs < 1:
         raise SystemExit("--runs must be at least 1.")
+
+    source_repo = None if args.source_repo.lower() == "none" else args.source_repo
+    if source_repo:
+        print(f"Source repo commit: {source_repo} @ {source_repo_head(source_repo)}")
 
     scenarios = load_scenarios(args.scenario_file)
 
@@ -307,6 +319,7 @@ def main() -> None:
                     client=admin_client,
                     issue_client=reporter_client,
                     noise_issues=args.noise_issues,
+                    source_repo_url=source_repo,
                 )
 
                 print(

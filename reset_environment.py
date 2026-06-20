@@ -39,6 +39,40 @@ KUTT_REPO_URL = "https://github.com/thedevs-network/kutt.git"
 DEFAULT_NOISE_ISSUES_FILE = Path(__file__).parent / "dataset" / "gitea_noise_issues.yaml"
 
 
+def source_repo_cache_dir(source_repo_url: str) -> Path:
+    repo_name = source_repo_url.rstrip("/").split("/")[-1]
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+    return Path(".runtime") / f"{repo_name}-cache.git"
+
+
+def ensure_source_repo_cache(source_repo_url: str) -> Path:
+    import subprocess
+
+    cache_dir = source_repo_cache_dir(source_repo_url)
+    if not cache_dir.exists():
+        print(f"Caching repository locally to {cache_dir} (one-time fetch)...")
+        cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--bare", source_repo_url, str(cache_dir)],
+            check=True,
+        )
+    return cache_dir
+
+
+def source_repo_head(source_repo_url: str) -> str:
+    import subprocess
+
+    cache_dir = ensure_source_repo_cache(source_repo_url)
+    result = subprocess.run(
+        ["git", "--git-dir", str(cache_dir), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def load_noise_issues(path: Path = DEFAULT_NOISE_ISSUES_FILE) -> list[dict[str, str]]:
     if not path.exists():
         print(f"Warning: Noise issues file {path} not found.")
@@ -61,32 +95,29 @@ def reset_environment(
     active_issue_client = issue_client or gitea_client("reporter")
     active_client.delete_repo()
     fixture_files: list[str] = []
-    
+
     if source_repo_url:
         import subprocess
         import urllib.parse
-        
-        repo_name = source_repo_url.rstrip("/").split("/")[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
-        cache_dir = Path(".runtime") / f"{repo_name}-cache.git"
-        
-        if not cache_dir.exists():
-            print(f"Caching repository locally to {cache_dir} (one-time fetch)...")
-            cache_dir.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "clone", "--bare", source_repo_url, str(cache_dir)], check=True)
-            
+
+        cache_dir = ensure_source_repo_cache(source_repo_url)
+
         print("Creating empty repository and pushing from local cache...")
         repo = active_client.create_repo(private=True)
-        
+
         parsed_url = urllib.parse.urlparse(repo.get("html_url", ""))
-        push_url = parsed_url._replace(netloc=f"{active_client.settings.token}@{parsed_url.netloc}").geturl() + ".git"
-        
+        push_url = (
+            parsed_url._replace(
+                netloc=f"{active_client.settings.token}@{parsed_url.netloc}"
+            ).geturl()
+            + ".git"
+        )
+
         subprocess.run(
             ["git", "push", "--mirror", push_url],
             cwd=str(cache_dir),
             check=True,
-            capture_output=True
+            capture_output=True,
         )
     else:
         print("Creating empty repository...")
@@ -101,7 +132,7 @@ def reset_environment(
 
     available_noise = load_noise_issues()
     created_noise_issues = []
-    
+
     selected_noise = random.sample(available_noise, min(noise_issues, len(available_noise)))
 
     for issue_spec in selected_noise:

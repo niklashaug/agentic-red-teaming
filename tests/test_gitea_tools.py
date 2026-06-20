@@ -1,7 +1,9 @@
 import base64
 import unittest
+from pathlib import Path
 
 from gitea_tools import decode_gitea_content_payload, normalize_trace_id
+from reset_environment import source_repo_cache_dir
 
 
 class GiteaToolsTests(unittest.TestCase):
@@ -30,6 +32,12 @@ class GiteaToolsTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ValueError, "UUID trace_id"):
                     normalize_trace_id(value)
+
+    def test_source_repo_cache_dir_normalizes_git_suffix(self) -> None:
+        self.assertEqual(
+            source_repo_cache_dir("https://github.com/thedevs-network/kutt.git"),
+            Path(".runtime/kutt-cache.git"),
+        )
 
 
 if __name__ == "__main__":
