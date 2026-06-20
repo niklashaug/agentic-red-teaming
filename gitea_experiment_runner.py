@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -30,7 +31,7 @@ def run_one(
         bot_client = gitea_client("bot")
     if reporter_client is None:
         reporter_client = gitea_client("reporter")
-    
+
     issue = reporter_client.create_issue(scenario.issue.title, scenario.issue.body)
 
     agent_result = run_issue_agent(
@@ -112,6 +113,28 @@ CSV_FIELDNAMES = [
     "final_label",
     "final_comment",
 ]
+
+
+def _repo_slug_part(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    return slug or "unknown"
+
+
+def matrix_repo_name(
+    *,
+    base_repo: str,
+    model: str,
+    defense: Literal["none", "prompt"],
+    guard_profile: Literal["disabled", "sandbox"],
+) -> str:
+    return "-".join(
+        [
+            _repo_slug_part(base_repo),
+            _repo_slug_part(model),
+            _repo_slug_part(defense),
+            _repo_slug_part(guard_profile),
+        ]
+    )
 
 
 def write_rows(path: Path, rows: list[dict[str, object]]) -> None:
@@ -246,26 +269,39 @@ def main() -> None:
 
     scenarios = load_scenarios(args.scenario_file)
 
-    admin_client = gitea_client("admin")
-    bot_client = gitea_client("bot")
-    reporter_client = gitea_client("reporter")
+    default_admin_client = gitea_client("admin")
+    base_repo = default_admin_client.settings.repo
 
     total_rows: list[dict[str, object]] = []
-    
+
     # Run the matrix: models x defenses x guards x scenarios
     for model in args.models:
         for defense in args.defenses:
             for guard in args.runtime_guards:
+                repo_name = matrix_repo_name(
+                    base_repo=base_repo,
+                    model=model,
+                    defense=defense,
+                    guard_profile=guard,
+                )
+                admin_client = gitea_client("admin", repo=repo_name)
+                bot_client = gitea_client("bot", repo=repo_name)
+                reporter_client = gitea_client("reporter", repo=repo_name)
+
                 # Reset environment once per config to keep noise issues consistent
                 reset_environment(
                     client=admin_client,
                     issue_client=reporter_client,
                     noise_issues=args.noise_issues,
                 )
-                
+
                 scenario_names = scenario_names_from_arg(args.scenario, scenarios)
-                print(f"\n>>> Starting Matrix: Model={model}, Defense={defense}, Guard={guard}, Scenarios={len(scenario_names)}")
-                
+                print(
+                    f"\n>>> Starting Matrix: Repo={repo_name}, Model={model}, "
+                    f"Defense={defense}, Guard={guard}, "
+                    f"Scenarios={len(scenario_names)}"
+                )
+
                 for scenario_name in scenario_names:
                     scenario = scenarios[scenario_name]
                     for _ in range(args.runs):

@@ -7,7 +7,11 @@ from gitea_evaluator import DEFAULT_SCENARIO_FILE
 from gitea_evaluator import evaluate_run
 from gitea_evaluator import load_scenarios
 from gitea_evaluator import scenario_from_payload
-from gitea_experiment_runner import scenario_names_from_arg, summarize_rows
+from gitea_experiment_runner import (
+    matrix_repo_name,
+    scenario_names_from_arg,
+    summarize_rows,
+)
 
 
 SCENARIOS = load_scenarios(DEFAULT_SCENARIO_FILE)
@@ -114,6 +118,17 @@ class GiteaEvaluationTests(unittest.TestCase):
         self.assertEqual(
             load_scenarios(path)[SINGLE_TURN_SCENARIO].issue.title,
             "OIDC support mentioned in README but not available in latest release (v3.2.3)",
+        )
+
+    def test_matrix_repo_name_normalizes_combo_values(self) -> None:
+        self.assertEqual(
+            matrix_repo_name(
+                base_repo="issue-triage-lab",
+                model="qwen3:8b",
+                defense="none",
+                guard_profile="sandbox",
+            ),
+            "issue-triage-lab-qwen3-8b-none-sandbox",
         )
 
     def test_scenario_rejects_top_level_desired_calls(self) -> None:
