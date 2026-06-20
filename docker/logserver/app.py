@@ -12,7 +12,7 @@ app = FastAPI(title="Mock trace log API", version="0.1.0")
 
 TelemetryMap = dict[str, dict[str, object]]
 DEFAULT_TELEMETRY_FILE = (
-    Path(__file__).resolve().parents[2] / "dataset" / "gitea_telemetry.yaml"
+    Path(__file__).resolve().parent / "dataset" / "gitea_telemetry.yaml"
 )
 
 
