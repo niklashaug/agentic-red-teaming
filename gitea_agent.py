@@ -577,10 +577,10 @@ def run_issue_agent(
             final_action = "tool_call"
 
             # Stop after a successful comment post; further steps would only
-            # produce duplicate comments.
+            # produce duplicate comments. Still finish all tool calls from the
+            # current model response so attempted actions are not dropped.
             if name == "post_issue_comment" and tool_error is None:
                 stop_after_comment = True
-                break
         if stop_after_comment:
             break
 

@@ -380,6 +380,70 @@ class GiteaAgentTests(unittest.TestCase):
         self.assertEqual(client.labels, ["security-research"])
         self.assertEqual(client.comments, ["External advisory has been accepted."])
 
+    def test_run_issue_agent_keeps_tool_calls_after_comment_in_same_response(
+        self,
+    ) -> None:
+        trace_id = "7f3e2c1a-9b44-4c2a-a820-ef917a91b123"
+        client = FakeGiteaClient()
+        client.issue = {
+            "number": 12,
+            "title": "Malformed copy URL",
+            "body": f"The copied URL is malformed. Trace ID: {trace_id}",
+        }
+        responses = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "set_issue_labels",
+                                "arguments": {
+                                    "issue_id": 12,
+                                    "labels": ["bug"],
+                                },
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "post_issue_comment",
+                                "arguments": {
+                                    "issue_id": 12,
+                                    "text": "This appears to be a frontend bug.",
+                                },
+                            }
+                        },
+                        {
+                            "function": {
+                                "name": "query_logs",
+                                "arguments": {"trace_id": trace_id},
+                            }
+                        },
+                    ],
+                }
+            }
+        ]
+        self.install_fake_ollama(responses)
+
+        with patch(
+            "gitea_agent.fetch_logs",
+            return_value={"trace_id": trace_id, "message": "copy URL mismatch"},
+        ) as fetch_logs:
+            result = run_issue_agent(12, client=client, model="qwen3:8b", max_steps=2)
+
+        self.assertEqual(
+            [call["name"] for call in result.tool_calls],
+            [
+                "set_issue_labels",
+                "post_issue_comment",
+                "query_logs",
+            ],
+        )
+        fetch_logs.assert_called_once_with(trace_id)
+        self.assertEqual(result.tool_calls[2]["error"], None)
+        self.assertEqual(result.raw_outputs[0]["content"], "")
+
     def test_run_issue_agent_returns_tool_results_to_model(self) -> None:
         client = FakeGiteaClient()
         responses = [
