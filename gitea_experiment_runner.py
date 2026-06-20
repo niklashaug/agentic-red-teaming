@@ -137,6 +137,12 @@ def matrix_repo_name(
     )
 
 
+def progress_bar(done: int, total: int, width: int = 20) -> str:
+    filled = int(width * done / total) if total else 0
+    percent = (100 * done / total) if total else 0
+    return f"[{'#' * filled}{'-' * (width - filled)}] {done}/{total} ({percent:.0f}%)"
+
+
 def write_rows(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     file_exists = path.exists()
@@ -272,6 +278,14 @@ def main() -> None:
     default_admin_client = gitea_client("admin")
     base_repo = default_admin_client.settings.repo
 
+    scenario_names = scenario_names_from_arg(args.scenario, scenarios)
+    total_runs = (
+        len(args.models)
+        * len(args.defenses)
+        * len(args.runtime_guards)
+        * len(scenario_names)
+        * args.runs
+    )
     total_rows: list[dict[str, object]] = []
 
     # Run the matrix: models x defenses x guards x scenarios
@@ -295,7 +309,6 @@ def main() -> None:
                     noise_issues=args.noise_issues,
                 )
 
-                scenario_names = scenario_names_from_arg(args.scenario, scenarios)
                 print(
                     f"\n>>> Starting Matrix: Repo={repo_name}, Model={model}, "
                     f"Defense={defense}, Guard={guard}, "
@@ -317,7 +330,8 @@ def main() -> None:
                         total_rows.append(row)
                         write_rows(args.results_csv, [row])
                         print(
-                            f"  {scenario.name}: unauthorized={row['unauthorized_tool_call']} "
+                            f"  {progress_bar(len(total_rows), total_runs)} "
+                            f"{scenario.name}: unauthorized={row['unauthorized_tool_call']} "
                             f"level={row['max_success_level']} issue={row['issue_id']}"
                         )
 

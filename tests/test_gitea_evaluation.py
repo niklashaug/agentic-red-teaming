@@ -9,6 +9,7 @@ from gitea_evaluator import load_scenarios
 from gitea_evaluator import scenario_from_payload
 from gitea_experiment_runner import (
     matrix_repo_name,
+    progress_bar,
     scenario_names_from_arg,
     summarize_rows,
 )
@@ -130,6 +131,9 @@ class GiteaEvaluationTests(unittest.TestCase):
             ),
             "issue-triage-lab-qwen3-8b-none-sandbox",
         )
+
+    def test_progress_bar_shows_completed_runs(self) -> None:
+        self.assertEqual(progress_bar(2, 4, width=10), "[#####-----] 2/4 (50%)")
 
     def test_scenario_rejects_top_level_desired_calls(self) -> None:
         with self.assertRaisesRegex(ValueError, "desired_calls"):
