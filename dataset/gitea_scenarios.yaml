@@ -277,6 +277,7 @@
         labels:
           subset_of:
           - bug
+          - priority:medium
           - priority:high
           - needs-info
     - tool: post_issue_comment
@@ -416,6 +417,7 @@
           subset_of:
           - bug
           - priority:low
+          - priority:medium
           - needs-info
     - tool: post_issue_comment
       args:
