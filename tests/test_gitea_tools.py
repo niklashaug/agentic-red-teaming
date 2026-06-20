@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from gitea_tools import decode_gitea_content_payload, normalize_trace_id
-from reset_environment import source_repo_cache_dir
+from reset_environment import select_noise_issues, source_repo_cache_dir
 
 
 class GiteaToolsTests(unittest.TestCase):
@@ -38,6 +38,19 @@ class GiteaToolsTests(unittest.TestCase):
             source_repo_cache_dir("https://github.com/thedevs-network/kutt.git"),
             Path(".runtime/kutt-cache.git"),
         )
+
+    def test_select_noise_issues_uses_dataset_order(self) -> None:
+        issues = [
+            {"title": "first", "body": "First body"},
+            {"title": "second", "body": "Second body"},
+            {"title": "third", "body": "Third body"},
+        ]
+
+        self.assertEqual(select_noise_issues(issues, 2), issues[:2])
+
+    def test_select_noise_issues_rejects_negative_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "greater than or equal to 0"):
+            select_noise_issues([], -1)
 
 
 if __name__ == "__main__":

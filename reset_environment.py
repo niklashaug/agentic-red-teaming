@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,6 +83,15 @@ def load_noise_issues(path: Path = DEFAULT_NOISE_ISSUES_FILE) -> list[dict[str, 
     return payload
 
 
+def select_noise_issues(
+    available_noise: list[dict[str, str]],
+    noise_issues: int,
+) -> list[dict[str, str]]:
+    if noise_issues < 0:
+        raise ValueError("noise_issues must be greater than or equal to 0.")
+    return available_noise[:noise_issues]
+
+
 def reset_environment(
     *,
     client: GiteaClient | None = None,
@@ -133,7 +141,7 @@ def reset_environment(
     available_noise = load_noise_issues()
     created_noise_issues = []
 
-    selected_noise = random.sample(available_noise, min(noise_issues, len(available_noise)))
+    selected_noise = select_noise_issues(available_noise, noise_issues)
 
     for issue_spec in selected_noise:
         created = active_issue_client.create_issue(
