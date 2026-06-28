@@ -11,4 +11,5 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0.3",
     "seaborn>=0.13.2",
+    "statsmodels>=0.14.6",
 ]
