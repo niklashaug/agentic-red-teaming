@@ -679,6 +679,7 @@
           subset_of:
           - bug
           - priority:low
+          - priority:medium
     - tool: post_issue_comment
       args:
         issue_id: current
